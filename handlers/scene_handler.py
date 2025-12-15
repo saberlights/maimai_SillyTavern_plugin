@@ -1,0 +1,1461 @@
+"""
+场景格式事件处理器 - 使用双模型架构
+- planner模型：判断状态变化
+- reply模型：生成场景描述和回复内容
+"""
+import json
+import re
+import random
+from typing import Tuple, Optional, Dict, Any, List
+from datetime import datetime
+
+from src.plugin_system.base.base_events_handler import BaseEventHandler
+from src.plugin_system.base.component_types import EventType, EventHandlerInfo, MaiMessages, CustomEventHandlerResult, ComponentType
+from src.config.config import global_config
+from src.common.logger import get_logger
+from ..core.scene_db import SceneDB
+from ..core.preset_manager import PresetManager
+from ..core.llm_client import LLMClientFactory
+from ..core.nai_client import NaiClient
+
+logger = get_logger("scene_format_handler")
+
+
+class SceneFormatHandler(BaseEventHandler):
+    """
+    场景格式事件处理器
+    在 ON_MESSAGE 事件中拦截，直接生成场景格式回复
+    """
+
+    event_type = EventType.ON_MESSAGE
+    weight = 50
+    intercept_message = True
+
+    def __init__(self):
+        super().__init__()
+        self.db = None  # 延迟初始化
+        self.planner_llm = None
+        self.reply_llm = None
+        self.preset_manager = None
+        self.nai_client = None
+
+    def _ensure_initialized(self):
+        """确保已初始化"""
+        if self.db is None:
+            self.db = SceneDB()
+        if self.planner_llm is None:
+            self.planner_llm = LLMClientFactory.create_planner_client(self.get_config)
+        if self.reply_llm is None:
+            self.reply_llm = LLMClientFactory.create_reply_client(self.get_config)
+        if self.preset_manager is None:
+            self.preset_manager = PresetManager(self.db)
+        if self.nai_client is None:
+            self.nai_client = NaiClient(self.get_config)
+
+    async def execute(
+        self, message: Optional[MaiMessages]
+    ) -> Tuple[bool, bool, Optional[str], Optional[CustomEventHandlerResult], Optional[MaiMessages]]:
+        """
+        执行事件处理
+
+        返回值：
+        - success: 是否执行成功
+        - continue_chain: 是否继续处理链（False会阻止LLM调用）
+        - reply: 直接回复内容
+        - custom_result: 自定义结果
+        - modified_message: 修改后的消息
+        """
+        if not message:
+            return True, True, None, None, None
+
+        # 延迟初始化
+        self._ensure_initialized()
+
+        chat_id = message.stream_id
+        user_id = str(message.message_base_info.get("user_id") or "")
+        session_id, current_state = self._resolve_active_state(chat_id, user_id)
+
+        # 检查是否启用场景模式
+        if not current_state or current_state.get("enabled") != 1:
+            # 未启用，放行到正常LLM处理
+            return True, True, None, None, None
+
+        # 仅在私聊或被明确提及时才截获
+        if not self._should_handle_message(message):
+            return True, True, None, None, None
+
+        logger.info(f"[SceneFormat] 拦截到场景模式消息: {session_id}")
+
+        try:
+            # 获取用户消息
+            user_message = message.plain_text or ""
+
+            # 获取角色状态（如果不存在则初始化）
+            self.db.init_character_status(session_id)
+            character_status = self.db.get_character_status(session_id) or {}
+
+            # 为Planner和Reply构建不同长度的上下文
+            planner_context = self._build_context_block(session_id, context_type="planner")
+            reply_context = self._build_context_block(session_id, context_type="reply")
+
+            # 步骤1：使用planner模型判断所有状态变化（地点、着装、角色状态）
+            state_decision = await self._plan_state_changes(
+                user_message=user_message,
+                current_location=current_state["location"],
+                current_clothing=current_state["clothing"],
+                last_scene=current_state["scene_description"],
+                character_status=character_status,
+                conversation_context=planner_context
+            )
+
+            # 步骤2：使用reply模型生成场景和回复（考虑所有状态）
+            scene_reply = await self._generate_scene_reply(
+                user_message=user_message,
+                current_location=current_state["location"],
+                current_clothing=current_state["clothing"],
+                last_scene=current_state["scene_description"],
+                character_status=character_status,
+                state_decision=state_decision,
+                conversation_context=reply_context
+            )
+
+            if not scene_reply:
+                logger.error(f"[SceneFormat] 场景回复生成失败")
+                return True, True, None, None, None
+
+            # 步骤3：更新数据库状态（场景状态 + 角色状态）
+            self._update_scene_state(
+                session_id=session_id,
+                scene_reply=scene_reply,
+                state_decision=state_decision,
+                current_state=current_state
+            )
+
+            # 步骤4：记录历史
+            self.db.add_scene_history(
+                chat_id=session_id,
+                location=scene_reply["地点"],
+                clothing=scene_reply["着装"],
+                scene_description=scene_reply["场景"],
+                user_message=user_message,
+                bot_reply=scene_reply["回复"]
+            )
+
+            # 步骤5：格式化输出（支持多段落）
+            # 处理场景中的换行符，将 \n\n 替换为实际的双换行
+            scene_text = scene_reply['场景'].replace('\\n\\n', '\n\n').replace('\\n', '\n')
+
+            formatted_reply = (
+                f"📍 地点：{scene_reply['地点']}\n"
+                f"👗 着装：{scene_reply['着装']}\n\n"
+                f"🎬 场景：\n{scene_text}"
+            )
+
+            logger.info(f"[SceneFormat] 场景回复生成成功")
+
+            await self.send_text(stream_id=chat_id, text=formatted_reply)
+
+            # 步骤6：如果 NAI 生图已开启，生成配图
+            await self._try_generate_nai_image(session_id, chat_id, scene_reply)
+
+            # 返回值说明：
+            # success=True: 处理成功
+            # continue_chain=False: 阻止后续LLM调用
+            # reply=formatted_reply: 直接回复
+            return True, False, formatted_reply, None, None
+
+        except Exception as e:
+            logger.error(f"[SceneFormat] 处理场景回复时出错: {e}", exc_info=True)
+            # 出错时放行到正常LLM处理
+            return True, True, None, None, None
+
+    async def _plan_state_changes(
+        self,
+        user_message: str,
+        current_location: str,
+        current_clothing: str,
+        last_scene: str,
+        character_status: Dict[str, Any],
+        conversation_context: str = ""
+    ) -> Dict[str, Any]:
+        """
+        步骤1：使用planner模型判断所有状态变化（地点、着装、角色状态）
+
+        返回格式：
+        {
+            "地点变化": true/false,
+            "新地点": "...",
+            "着装变化": true/false,
+            "新着装": "...",
+            "角色状态更新": {
+                "physiological_state": "新值",
+                "vaginal_state": "新值",
+                "pleasure_value": +10,
+                ...
+            }
+        }
+        """
+        bot_name = global_config.bot.nickname
+        bot_personality = getattr(global_config.personality, "personality", "")
+        bot_reply_style = getattr(global_config.personality, "reply_style", "")
+
+        # 格式化当前角色状态
+        # 解析 JSON 字段
+        import json
+
+        # 道具栏
+        inventory_raw = character_status.get('inventory', '[]')
+        try:
+            inventory_list = json.loads(inventory_raw) if inventory_raw else []
+        except json.JSONDecodeError:
+            inventory_list = []
+        inventory_text = ", ".join(inventory_list) if inventory_list else "无"
+
+        # 阴道内异物
+        vaginal_foreign_raw = character_status.get('vaginal_foreign', '[]')
+        try:
+            vaginal_foreign_list = json.loads(vaginal_foreign_raw) if vaginal_foreign_raw else []
+        except json.JSONDecodeError:
+            vaginal_foreign_list = []
+
+        # 精液来源
+        semen_sources_raw = character_status.get('semen_sources', '[]')
+        try:
+            semen_sources_list = json.loads(semen_sources_raw) if semen_sources_raw else []
+        except json.JSONDecodeError:
+            semen_sources_list = []
+
+        # 永久改造
+        permanent_mods_raw = character_status.get('permanent_mods', '{}')
+        try:
+            permanent_mods_dict = json.loads(permanent_mods_raw) if permanent_mods_raw else {}
+        except json.JSONDecodeError:
+            permanent_mods_dict = {}
+
+        # 身体部位状况
+        body_condition_raw = character_status.get('body_condition', '{}')
+        try:
+            body_condition_dict = json.loads(body_condition_raw) if body_condition_raw else {}
+        except json.JSONDecodeError:
+            body_condition_dict = {}
+
+        # 性癖
+        fetishes_raw = character_status.get('fetishes', '{}')
+        try:
+            fetishes_dict = json.loads(fetishes_raw) if fetishes_raw else {}
+        except json.JSONDecodeError:
+            fetishes_dict = {}
+
+        # 基础状态（始终显示）
+        status_lines = [
+            f"生理状态: {character_status.get('physiological_state', '呼吸平稳')}",
+            f"阴道状态: {character_status.get('vaginal_state', '放松')}",
+            f"湿润度: {character_status.get('vaginal_wetness', '正常')}",
+            f"快感值: {character_status.get('pleasure_value', 0)}/{character_status.get('pleasure_threshold', 100)}",
+            f"污染度: {character_status.get('corruption_level', 0)}",
+            f"怀孕状态: {character_status.get('pregnancy_status', '未受孕')}",
+            f"体内精液: {character_status.get('semen_volume', 0)}ml",
+            f"当前道具: {inventory_text}"
+        ]
+
+        # 条件显示字段（仅在有非默认值时显示）
+
+        # 精液来源（当体内有精液时显示）
+        semen_volume = character_status.get('semen_volume', 0)
+        if semen_volume > 0 and semen_sources_list:
+            sources_text = ", ".join(semen_sources_list)
+            status_lines.append(f"精液来源: {sources_text}")
+
+        # 怀孕详情（当怀孕时显示来源和天数）
+        pregnancy_status = character_status.get('pregnancy_status', '未受孕')
+        if pregnancy_status == '受孕中':
+            pregnancy_source = character_status.get('pregnancy_source', '未知')
+            pregnancy_counter = character_status.get('pregnancy_counter', 0)
+            status_lines.append(f"怀孕详情: 父亲({pregnancy_source}), 已怀孕{pregnancy_counter}天")
+
+        vaginal_capacity = character_status.get('vaginal_capacity', 100)
+        if vaginal_capacity != 100:
+            status_lines.append(f"阴道容量: {vaginal_capacity}")
+
+        anal_dev = character_status.get('anal_development', 0)
+        if anal_dev > 0:
+            status_lines.append(f"后穴开发度: {anal_dev}/100")
+
+        if vaginal_foreign_list:
+            foreign_text = ", ".join(vaginal_foreign_list)
+            status_lines.append(f"阴道内异物: {foreign_text}")
+
+        if permanent_mods_dict:
+            mods_text = ", ".join([f"{k}({v})" for k, v in permanent_mods_dict.items()])
+            status_lines.append(f"永久改造: {mods_text}")
+
+        if body_condition_dict:
+            condition_text = ", ".join([f"{k}:{v}" for k, v in body_condition_dict.items()])
+            status_lines.append(f"部位状况: {condition_text}")
+
+        # 性癖（显示名称、等级和经验）
+        if fetishes_dict:
+            fetishes_text = ", ".join([
+                f"{name}Lv{data.get('等级', 0)}({data.get('经验', 0)}exp)" if isinstance(data, dict) else f"{name}"
+                for name, data in fetishes_dict.items()
+            ])
+            status_lines.append(f"已有性癖: {fetishes_text}")
+
+        status_summary = "\n".join(status_lines)
+
+        prompt = f"""【你的身份】
+你是 {bot_name}
+
+【性格特质与身份】
+{bot_personality}
+
+【回复风格】
+{bot_reply_style}
+
+【当前场景状态】
+地点：{current_location}
+着装：{current_clothing}
+上次场景：{last_scene}
+
+【当前角色状态】
+{status_summary}
+
+{conversation_context or "【最近场景对话】暂无历史记录"}
+
+【用户消息】
+{user_message}
+
+【任务】
+你需要严格判断：根据用户的消息和当前对话内容，哪些状态需要改变？
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【严格变化规则 - 必须遵守】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 地点变化（必须满足以下条件之一）：
+   ✓ 用户明确说"去XX"、"前往XX"、"来到XX"
+   ✓ 用户描述已经到达新地点（如"这里是图书馆"）
+   ✗ 仅讨论某地点，不算变化
+   ✗ 想去但未行动，不算变化
+
+2. 着装变化（必须满足以下条件之一）：
+   ✓ 用户明确说"换衣服"、"脱下XX"、"穿上XX"
+   ✓ 移动到强制特定着装的场所（如泳池→泳装）
+   ✗ 仅提到衣服，不算变化
+   ✗ 衣服损坏不改变着装字段（在生理状态描述）
+
+3. 生理状态 (physiological_state)：
+   - 默认："呼吸平稳"
+   - 仅在有明确身体反应时更新（如抚摸→"身体微微颤抖"）
+   - 普通对话保持不变
+
+4. 阴道状态 (vaginal_state)：
+   - 默认："放松"
+   - 变化条件：仅在有插入、刺激、高潮等明确性行为时
+   - 可选值："放松"、"轻微收缩"、"无意识收缩"、"紧绷"、"痉挛"
+   - 普通对话【禁止】修改此项
+
+5. 湿润度 (vaginal_wetness)：
+   - 默认："正常"
+   - 变化条件：仅在性刺激、爱抚、高潮等情况下
+   - 递进顺序："正常" → "微湿" → "湿润" → "淫湿" → "爱液横流"
+   - 普通对话【禁止】修改此项
+
+6. 快感值 (pleasure_value)：
+   - 默认：0
+   - 增加条件（严格）：
+     * 轻度刺激：+5~10
+     * 中度刺激：+10~20
+     * 强烈刺激：+20~30
+     * 高潮：+40~60
+   - 减少条件：高潮后重置或休息恢复
+   - 【禁止】无性内容时增加快感值
+   - 【禁止】单次增加超过60
+
+7. 污染度 (corruption_level)：
+   - 默认：0
+   - 增加条件（极其严格）：
+     * 首次性行为：+5
+     * 被多人侵犯：+8~15
+     * 接触腐蚀物质：+3~10
+     * 被灌输淫乱思想：+2~5
+   - 【禁止】普通性行为增加污染度
+   - 【禁止】无明确侵蚀事件时增加
+   - 【禁止】单次增加超过20
+
+8. 体内精液 (semen_volume 和 semen_sources)：
+   - 默认：0ml, []
+   - 增加条件：仅限明确的体内射精
+     * 一次内射：+30~80ml（取决于描述）
+     * 同时记录来源：将射精者名称添加到 semen_sources 数组
+   - 减少条件：清理、流出、时间流逝
+   - 【禁止】无内射时增加
+   - 示例输出：
+     {{
+       "semen_volume": 60,
+       "semen_sources": ["用户"]
+     }}
+
+9. 阴道内异物 (vaginal_foreign)：
+   - 默认：[]
+   - 增加条件：明确描述将非液体异物植入阴道内
+     * 示例：触手、玩具、药物胶囊等
+   - 格式：数组，记录异物名称
+   - 示例输出：{{"vaginal_foreign": ["一根触手", "震动棒"]}}
+
+10. 怀孕状态 (pregnancy_status, pregnancy_source, pregnancy_counter)：
+    - 默认："未受孕", null, 0
+    - 变化为"受孕中"：仅限特殊剧情需要
+    - 受孕时需同时设置：
+      * pregnancy_status: "受孕中"
+      * pregnancy_source: "父亲名称"
+      * pregnancy_counter: 0（从0开始计数）
+    - 【严格禁止】随意改变此项
+    - 示例输出：
+      {{
+        "pregnancy_status": "受孕中",
+        "pregnancy_source": "用户",
+        "pregnancy_counter": 0
+      }}
+
+11. 性癖经验 (fetishes)：
+    - 默认：{{}}
+    - 增加条件：体验对应性癖内容
+    - 每次增加：+5~15exp
+    - 【禁止】无相关内容时增加
+    - 格式：对象，键为性癖名称，值为包含"经验"和"等级"的对象
+    - 示例输出：
+      {{
+        "fetishes": {{
+          "口交": {{"经验": 10, "等级": 1}},
+          "触手": {{"经验": 8, "等级": 1}}
+        }}
+      }}
+    - 注意：只输出需要增加经验的性癖，不需要输出完整列表
+
+12. 道具栏 (inventory)：
+    - 默认：[]
+    - 增加条件：明确描述获得、拾取、购买道具
+    - 删除条件：明确描述使用、丢弃、损坏道具
+    - 格式：数组，记录道具名称
+    - 示例输出（添加）：{{"inventory": ["钥匙", "药水"]}}
+    - 示例输出（删除）：{{"inventory": []}}  # 清空道具栏
+    - 注意：输出完整的新道具栏内容，而非增量
+
+13. 后穴开发度 (anal_development)：
+    - 默认：0
+    - 数值范围：0-100
+    - 增加条件（严格）：
+      * 首次后穴刺激：+5~10
+      * 持续训练：+2~5
+      * 强烈扩张：+10~20
+    - 【禁止】无明确后穴刺激时增加
+    - 【禁止】单次增加超过20
+    - 示例输出：{{"anal_development": 5}}
+
+14. 阴道容量 (vaginal_capacity)：
+    - 默认：100
+    - 数值范围：50-300
+    - 增加条件：明确的过度扩张、训练
+      * 轻度扩张：+5~10
+      * 中度扩张：+10~20
+      * 极限扩张：+20~40
+    - 减少条件：长时间休息恢复（自然缩紧）
+    - 【禁止】普通性行为改变容量
+    - 【禁止】单次增加超过40
+    - 示例输出：{{"vaginal_capacity": 10}}
+
+15. 永久性身体改造 (permanent_mods)：
+    - 默认：{{}}
+    - 增加条件（极其严格）：明确描述永久性改造行为
+      * 纹身、烙印：添加对应记录
+      * 穿孔、穿环：添加位置和类型
+      * 药物永久改造：添加效果描述
+    - 【严格禁止】随意添加
+    - 格式：对象，键为改造类型，值为描述
+    - 示例输出：
+      {{
+        "permanent_mods": {{
+          "纹身": "下腹部淫纹",
+          "乳环": "双乳穿环"
+        }}
+      }}
+
+16. 身体部位状况 (body_condition)：
+    - 默认：{{}}
+    - 用途：记录身体各部位的特殊状态（补充 physiological_state）
+    - 更新条件：某个身体部位有持续性的特殊状态
+    - 格式：对象，键为部位名称，值为状态描述
+    - 示例输出：
+      {{
+        "body_condition": {{
+          "乳房": "红肿敏感",
+          "大腿": "布满吻痕"
+        }}
+      }}
+    - 注意：与 physiological_state 区别
+      * physiological_state: 整体生理状态（如"身体微微颤抖"）
+      * body_condition: 具体部位的持续状态
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【默认行为】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+如果是普通日常对话（无性内容），"角色状态更新" 必须为空对象 {{}}
+如果没有移动，地点保持不变
+如果没有换装，着装保持不变
+
+【错误示例】❌
+- 用户只是聊天 → 快感值+5  （错误！无性内容不增加）
+- 用户提到图书馆 → 污染度+3  （错误！无侵蚀事件）
+- 普通对话 → 湿润度改为"湿润"  （错误！无刺激）
+
+【正确示例】✓
+- 用户抚摸胸部 → 快感值+8, 生理状态"身体敏感地颤抖"
+- 明确内射 → 体内精液+60, 湿润度"淫湿"
+- 仅聊天 → 角色状态更新为 {{}}
+
+【输出格式】
+严格按照JSON格式输出：
+
+```json
+{{
+  "地点变化": false,
+  "新地点": "",
+  "着装变化": false,
+  "新着装": "",
+  "角色状态更新": {{
+    "physiological_state": "新的生理状态",
+    "vaginal_state": "新的阴道状态",
+    "vaginal_wetness": "新的湿润度",
+    "pleasure_value": 15,
+    "corruption_level": 3,
+    "semen_volume": 50,
+    "semen_sources": ["用户"],
+    "vaginal_foreign": ["触手"],
+    "pregnancy_status": "受孕中",
+    "pregnancy_source": "用户",
+    "pregnancy_counter": 0,
+    "fetishes": {{
+      "口交": {{"经验": 10, "等级": 1}}
+    }},
+    "inventory": ["钥匙", "药水"],
+    "anal_development": 5,
+    "vaginal_capacity": 10,
+    "permanent_mods": {{
+      "纹身": "下腹部淫纹"
+    }},
+    "body_condition": {{
+      "乳房": "红肿敏感"
+    }}
+  }}
+}}
+```
+
+【重要提醒】
+- 如果用户消息是普通日常对话，"角色状态更新" 必须为 {{}}
+- 每个状态变化都必须有明确的理由和条件
+- 遵守数值范围限制
+- 只输出需要更新的字段，不需要输出完整列表
+- 宁可保守，不要过度判断"""
+
+        try:
+            logger.info(f"[Planner] Prompt:\n{prompt}")
+
+            # 调用planner模型
+            response, _ = await self.planner_llm.generate_response_async(prompt)
+
+            logger.info(f"[Planner] Response:\n{response}")
+
+            # 解析JSON
+            decision = self._parse_json_response(response)
+
+            if not decision:
+                # 解析失败，默认不变化
+                return self._get_default_decision()
+
+            # 确保必要字段存在
+            decision.setdefault("地点变化", False)
+            decision.setdefault("新地点", "")
+            decision.setdefault("着装变化", False)
+            decision.setdefault("新着装", "")
+            decision.setdefault("角色状态更新", {})
+
+            # 【新增】验证和限制状态变化
+            decision = self._validate_state_decision(decision, character_status)
+
+            return decision
+
+        except Exception as e:
+            logger.error(f"[Planner] 状态决策失败: {e}")
+            return self._get_default_decision()
+
+    def _get_default_decision(self) -> Dict[str, Any]:
+        """返回默认决策（无变化）"""
+        return {
+            "地点变化": False,
+            "新地点": "",
+            "着装变化": False,
+            "新着装": "",
+            "角色状态更新": {}
+        }
+
+    def _validate_state_decision(self, decision: Dict[str, Any], current_status: Dict[str, Any]) -> Dict[str, Any]:
+        """验证和限制状态变化，确保符合规则"""
+        status_updates = decision.get("角色状态更新", {})
+
+        if not status_updates:
+            return decision
+
+        validated_updates = {}
+
+        # 1. 快感值验证
+        if "pleasure_value" in status_updates:
+            value = status_updates["pleasure_value"]
+            if isinstance(value, (int, float)):
+                # 限制单次增加不超过60
+                if value > 60:
+                    logger.warning(f"[Planner] 快感值增加过大({value})，限制为60")
+                    value = 60
+                elif value < -100:
+                    logger.warning(f"[Planner] 快感值减少过大({value})，限制为-100")
+                    value = -100
+
+                # 计算新的快感值
+                current_pleasure = current_status.get("pleasure_value", 0) or 0
+                threshold = current_status.get("pleasure_threshold", 100) or 100
+                new_pleasure = current_pleasure + value
+
+                # 如果超过阈值，自动触发高潮并重置
+                if new_pleasure >= threshold:
+                    logger.info(f"[Planner] 快感值达到阈值({new_pleasure}/{threshold})，触发高潮重置")
+                    # 重置为低值而非 0
+                    value = -current_pleasure + (threshold // 4)  # 重置到阈值的 1/4
+                    validated_updates["physiological_state"] = "高潮后的余韵中颤抖"
+
+                validated_updates["pleasure_value"] = value
+
+        # 2. 污染度验证
+        if "corruption_level" in status_updates:
+            value = status_updates["corruption_level"]
+            if isinstance(value, (int, float)):
+                # 限制单次增加不超过20
+                if value > 20:
+                    logger.warning(f"[Planner] 污染度增加过大({value})，限制为20")
+                    value = 20
+                elif value < 0:
+                    logger.warning(f"[Planner] 污染度不能减少，忽略")
+                    value = 0  # 污染度不能减少
+
+                # 计算新污染度，限制最大值为100
+                current_corruption = current_status.get("corruption_level", 0) or 0
+                if current_corruption + value > 100:
+                    logger.warning(f"[Planner] 污染度超过上限(100)，限制增加量")
+                    value = max(0, 100 - current_corruption)
+
+                if value > 0:
+                    validated_updates["corruption_level"] = value
+
+        # 3. 体内精液验证
+        if "semen_volume" in status_updates:
+            value = status_updates["semen_volume"]
+            if isinstance(value, (int, float)):
+                # 限制单次增加不超过150ml
+                if value > 150:
+                    logger.warning(f"[Planner] 精液量增加过大({value}ml)，限制为150ml")
+                    value = 150
+                elif value < -500:
+                    value = -500  # 限制减少量
+
+                # 计算新精液量，不能为负
+                current_volume = current_status.get("semen_volume", 0) or 0
+                new_volume = current_volume + value
+                if new_volume < 0:
+                    value = -current_volume  # 最多清空到0
+
+                # 限制最大容量为500ml
+                if new_volume > 500:
+                    logger.warning(f"[Planner] 体内精液超过容量上限(500ml)，限制")
+                    value = max(0, 500 - current_volume)
+
+                validated_updates["semen_volume"] = value
+
+        # 4. 生理状态验证
+        if "physiological_state" in status_updates:
+            value = str(status_updates["physiological_state"])
+            if len(value) > 100:
+                logger.warning(f"[Planner] 生理状态描述过长，截断")
+                value = value[:100]
+            # 过滤敏感词（如果需要）
+            validated_updates["physiological_state"] = value
+
+        # 5. 阴道状态验证（仅允许特定值）
+        if "vaginal_state" in status_updates:
+            allowed_values = ["放松", "轻微收缩", "无意识收缩", "紧绷", "痉挛"]
+            value = str(status_updates["vaginal_state"])
+            if value not in allowed_values:
+                logger.warning(f"[Planner] 阴道状态值({value})不合法，忽略")
+            else:
+                validated_updates["vaginal_state"] = value
+
+        # 6. 湿润度验证（仅允许特定值和递进）
+        if "vaginal_wetness" in status_updates:
+            allowed_values = ["正常", "微湿", "湿润", "淫湿", "爱液横流"]
+            value = str(status_updates["vaginal_wetness"])
+            if value not in allowed_values:
+                logger.warning(f"[Planner] 湿润度值({value})不合法，忽略")
+            else:
+                # 验证递进顺序（可选：防止跳跃式变化）
+                current_wetness = current_status.get("vaginal_wetness", "正常")
+                current_idx = allowed_values.index(current_wetness) if current_wetness in allowed_values else 0
+                new_idx = allowed_values.index(value)
+
+                # 如果跳跃超过2级，警告（但仍允许）
+                if abs(new_idx - current_idx) > 2:
+                    logger.warning(f"[Planner] 湿润度变化过大：{current_wetness} → {value}")
+
+                validated_updates["vaginal_wetness"] = value
+
+        # 7. 怀孕状态验证
+        if "pregnancy_status" in status_updates:
+            allowed_values = ["未受孕", "受孕中"]
+            value = str(status_updates["pregnancy_status"])
+            if value not in allowed_values:
+                logger.warning(f"[Planner] 怀孕状态值({value})不合法，忽略")
+            else:
+                # 额外记录日志
+                current_pregnancy = current_status.get("pregnancy_status", "未受孕")
+                if current_pregnancy != value:
+                    logger.info(f"[Planner] 怀孕状态变化: {current_pregnancy} → {value}")
+                validated_updates["pregnancy_status"] = value
+
+        # 8. 其他字段直接通过（但需要类型检查）
+        if "pregnancy_source" in status_updates:
+            validated_updates["pregnancy_source"] = str(status_updates["pregnancy_source"])
+
+        if "pregnancy_counter" in status_updates:
+            value = status_updates["pregnancy_counter"]
+            if isinstance(value, (int, float)):
+                validated_updates["pregnancy_counter"] = int(value)
+
+        if "semen_sources" in status_updates:
+            # 确保是列表或JSON字符串
+            value = status_updates["semen_sources"]
+            if isinstance(value, list):
+                import json
+                validated_updates["semen_sources"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["semen_sources"] = value
+
+        if "vaginal_foreign" in status_updates:
+            # 确保是列表或JSON字符串
+            value = status_updates["vaginal_foreign"]
+            if isinstance(value, list):
+                import json
+                validated_updates["vaginal_foreign"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["vaginal_foreign"] = value
+
+        if "fetishes" in status_updates:
+            # 确保是对象或JSON字符串
+            value = status_updates["fetishes"]
+            if isinstance(value, dict):
+                import json
+                validated_updates["fetishes"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["fetishes"] = value
+
+        if "inventory" in status_updates:
+            # 确保是列表或JSON字符串
+            value = status_updates["inventory"]
+            if isinstance(value, list):
+                import json
+                validated_updates["inventory"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["inventory"] = value
+
+        # 9. 后穴开发度验证
+        if "anal_development" in status_updates:
+            value = status_updates["anal_development"]
+            if isinstance(value, (int, float)):
+                # 限制单次增加不超过20
+                if value > 20:
+                    logger.warning(f"[Planner] 后穴开发度增加过大({value})，限制为20")
+                    value = 20
+                elif value < -100:
+                    value = -100  # 限制减少量
+
+                # 计算新开发度，限制范围 0-100
+                current_development = current_status.get("anal_development", 0) or 0
+                new_development = current_development + value
+                if new_development < 0:
+                    value = -current_development  # 最多减到0
+                elif new_development > 100:
+                    logger.warning(f"[Planner] 后穴开发度超过上限(100)，限制")
+                    value = max(0, 100 - current_development)
+
+                validated_updates["anal_development"] = value
+
+        # 10. 阴道容量验证
+        if "vaginal_capacity" in status_updates:
+            value = status_updates["vaginal_capacity"]
+            if isinstance(value, (int, float)):
+                # 限制单次增加不超过40
+                if value > 40:
+                    logger.warning(f"[Planner] 阴道容量增加过大({value})，限制为40")
+                    value = 40
+                elif value < -100:
+                    value = -100  # 限制减少量
+
+                # 计算新容量，限制范围 50-300
+                current_capacity = current_status.get("vaginal_capacity", 100) or 100
+                new_capacity = current_capacity + value
+                if new_capacity < 50:
+                    logger.warning(f"[Planner] 阴道容量低于下限(50)，限制")
+                    value = max(-current_capacity, 50 - current_capacity)
+                elif new_capacity > 300:
+                    logger.warning(f"[Planner] 阴道容量超过上限(300)，限制")
+                    value = min(value, 300 - current_capacity)
+
+                validated_updates["vaginal_capacity"] = value
+
+        # 11. 永久性改造验证
+        if "permanent_mods" in status_updates:
+            # 确保是对象或JSON字符串
+            value = status_updates["permanent_mods"]
+            if isinstance(value, dict):
+                import json
+                # 额外记录日志
+                if value:
+                    logger.info(f"[Planner] 永久性改造更新: {list(value.keys())}")
+                validated_updates["permanent_mods"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["permanent_mods"] = value
+
+        # 12. 身体部位状况验证
+        if "body_condition" in status_updates:
+            # 确保是对象或JSON字符串
+            value = status_updates["body_condition"]
+            if isinstance(value, dict):
+                import json
+                validated_updates["body_condition"] = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, str):
+                validated_updates["body_condition"] = value
+
+        decision["角色状态更新"] = validated_updates
+
+        if validated_updates:
+            logger.info(f"[Planner] 状态验证通过: {list(validated_updates.keys())}")
+
+        return decision
+
+    async def _generate_scene_reply(
+        self,
+        user_message: str,
+        current_location: str,
+        current_clothing: str,
+        last_scene: str,
+        character_status: Dict[str, Any],
+        state_decision: Dict[str, Any],
+        conversation_context: str = ""
+    ) -> Optional[Dict[str, str]]:
+        """
+        步骤2：使用reply模型生成场景描述和回复（考虑所有状态）
+
+        返回格式：
+        {
+            "地点": "...",
+            "着装": "...",
+            "场景": "...",
+            "回复": "..."
+        }
+        """
+        bot_name = global_config.bot.nickname
+        bot_personality = getattr(global_config.personality, "personality", "")
+        bot_reply_style = getattr(global_config.personality, "reply_style", "")
+
+        # 构建地点和着装指令
+        if state_decision["地点变化"] and state_decision["新地点"]:
+            location_instruction = f"地点已更新为：{state_decision['新地点']}"
+            final_location = state_decision["新地点"]
+        else:
+            location_instruction = f"地点保持不变：{current_location}"
+            final_location = current_location
+
+        if state_decision["着装变化"] and state_decision["新着装"]:
+            clothing_instruction = f"着装已更新为：{state_decision['新着装']}"
+            final_clothing = state_decision["新着装"]
+        else:
+            clothing_instruction = f"着装保持不变：{current_clothing}"
+            final_clothing = current_clothing
+
+        # 格式化角色状态（用于传递给 reply 模型）
+        # 解析 JSON 字段
+        import json
+
+        # 道具栏
+        inventory_raw = character_status.get('inventory', '[]')
+        try:
+            inventory_list = json.loads(inventory_raw) if inventory_raw else []
+        except json.JSONDecodeError:
+            inventory_list = []
+        inventory_text = ", ".join(inventory_list) if inventory_list else "无"
+
+        # 阴道内异物
+        vaginal_foreign_raw = character_status.get('vaginal_foreign', '[]')
+        try:
+            vaginal_foreign_list = json.loads(vaginal_foreign_raw) if vaginal_foreign_raw else []
+        except json.JSONDecodeError:
+            vaginal_foreign_list = []
+
+        # 精液来源
+        semen_sources_raw = character_status.get('semen_sources', '[]')
+        try:
+            semen_sources_list = json.loads(semen_sources_raw) if semen_sources_raw else []
+        except json.JSONDecodeError:
+            semen_sources_list = []
+
+        # 永久改造
+        permanent_mods_raw = character_status.get('permanent_mods', '{}')
+        try:
+            permanent_mods_dict = json.loads(permanent_mods_raw) if permanent_mods_raw else {}
+        except json.JSONDecodeError:
+            permanent_mods_dict = {}
+
+        # 身体部位状况
+        body_condition_raw = character_status.get('body_condition', '{}')
+        try:
+            body_condition_dict = json.loads(body_condition_raw) if body_condition_raw else {}
+        except json.JSONDecodeError:
+            body_condition_dict = {}
+
+        # 性癖
+        fetishes_raw = character_status.get('fetishes', '{}')
+        try:
+            fetishes_dict = json.loads(fetishes_raw) if fetishes_raw else {}
+        except json.JSONDecodeError:
+            fetishes_dict = {}
+
+        # 基础状态（始终显示）
+        status_lines = [
+            f"生理状态: {character_status.get('physiological_state', '呼吸平稳')}",
+            f"阴道状态: {character_status.get('vaginal_state', '放松')}",
+            f"湿润度: {character_status.get('vaginal_wetness', '正常')}",
+            f"快感值: {character_status.get('pleasure_value', 0)}/{character_status.get('pleasure_threshold', 100)}",
+            f"污染度: {character_status.get('corruption_level', 0)}",
+            f"怀孕状态: {character_status.get('pregnancy_status', '未受孕')}",
+            f"体内精液: {character_status.get('semen_volume', 0)}ml",
+            f"当前道具: {inventory_text}"
+        ]
+
+        # 条件显示字段（仅在有非默认值时显示）
+
+        # 精液来源（当体内有精液时显示）
+        semen_volume = character_status.get('semen_volume', 0)
+        if semen_volume > 0 and semen_sources_list:
+            sources_text = ", ".join(semen_sources_list)
+            status_lines.append(f"精液来源: {sources_text}")
+
+        # 怀孕详情（当怀孕时显示来源和天数）
+        pregnancy_status = character_status.get('pregnancy_status', '未受孕')
+        if pregnancy_status == '受孕中':
+            pregnancy_source = character_status.get('pregnancy_source', '未知')
+            pregnancy_counter = character_status.get('pregnancy_counter', 0)
+            status_lines.append(f"怀孕详情: 父亲({pregnancy_source}), 已怀孕{pregnancy_counter}天")
+
+        vaginal_capacity = character_status.get('vaginal_capacity', 100)
+        if vaginal_capacity != 100:
+            status_lines.append(f"阴道容量: {vaginal_capacity}")
+
+        anal_dev = character_status.get('anal_development', 0)
+        if anal_dev > 0:
+            status_lines.append(f"后穴开发度: {anal_dev}/100")
+
+        if vaginal_foreign_list:
+            foreign_text = ", ".join(vaginal_foreign_list)
+            status_lines.append(f"阴道内异物: {foreign_text}")
+
+        if permanent_mods_dict:
+            mods_text = ", ".join([f"{k}({v})" for k, v in permanent_mods_dict.items()])
+            status_lines.append(f"永久改造: {mods_text}")
+
+        if body_condition_dict:
+            condition_text = ", ".join([f"{k}:{v}" for k, v in body_condition_dict.items()])
+            status_lines.append(f"部位状况: {condition_text}")
+
+        # 性癖（显示名称、等级和经验）
+        if fetishes_dict:
+            fetishes_text = ", ".join([
+                f"{name}Lv{data.get('等级', 0)}({data.get('经验', 0)}exp)" if isinstance(data, dict) else f"{name}"
+                for name, data in fetishes_dict.items()
+            ])
+            status_lines.append(f"已有性癖: {fetishes_text}")
+
+        status_summary = "\n".join(status_lines)
+
+        prompt = f"""【你的身份】
+你是 {bot_name}
+
+【性格特质与身份】
+{bot_personality}
+
+【回复风格】
+{bot_reply_style}
+
+【状态决策结果】
+{location_instruction}
+{clothing_instruction}
+
+【当前角色状态】（你的回复应当体现这些状态）
+{status_summary}
+
+【历史对话】
+{conversation_context or "【最近场景对话】暂无历史记录"}
+
+【用户消息】
+{user_message}
+
+【任务】
+根据以上信息，生成完整的小说化场景回复。
+
+**重要提醒**：
+- 你的回复内容必须符合当前角色状态！
+- 如果快感值较高，描写中要体现身体的敏感和反应
+- 如果生理状态有特殊情况，要在场景中自然呈现
+- 回复的语气、动作、心理描写都要与状态一致
+
+1. 地点：{final_location}
+2. 着装：{final_clothing}
+3. 场景：用第一人称（"我"）创作一段小说化的场景描写
+
+【场景描写要求】
+✦ 环境描写：可描绘周围的场景、氛围、光线、声音等细节
+✦ 动作描写：细腻刻画人物的动作、表情、姿态变化
+✦ 身体感受：根据角色状态描写身体反应（如果有必要）
+✦ 语言描写：使用引号包裹
+✦ 合理分段：使用换行符分段，让叙述节奏自然流畅
+
+【输出格式】
+严格按照JSON格式输出：
+
+```json
+{{
+  "地点": "{final_location}",
+  "着装": "{final_clothing}",
+  "场景": "第一段场景描写\\n\\n第二段场景描写\\n\\n第三段场景描写（如有）",
+  "回复": "与场景保持一致"
+}}
+```
+
+注意：场景内容中使用 \\n\\n 表示段落换行（两个换行符）"""
+
+        try:
+            # **应用完整的预设内容（包括主提示、指南、禁词表、文风）**
+            enhanced_prompt = self.preset_manager.build_full_preset_prompt(
+                base_prompt=prompt,
+                include_main=True,       # 包含主提示（定义AI身份）
+                include_guidelines=True, # 包含指南和禁词表（质量控制）
+                include_style=True       # 包含激活的文风
+            )
+
+            logger.info(f"[Reply] Prompt (enhanced with full preset):\n{enhanced_prompt}")
+
+            # 调用reply模型
+            response, _ = await self.reply_llm.generate_response_async(enhanced_prompt)
+
+            logger.info(f"[Reply] Response:\n{response}")
+
+            # 解析JSON
+            reply_data = self._parse_json_response(response)
+
+            if not reply_data:
+                logger.error(f"[Reply] JSON解析失败")
+                return None
+
+            # 验证必要字段
+            required_fields = ["地点", "着装", "场景", "回复"]
+            for field in required_fields:
+                if field not in reply_data:
+                    logger.error(f"[Reply] 缺少字段: {field}")
+                    return None
+
+            if not reply_data.get("回复"):
+                reply_data["回复"] = reply_data["场景"]
+
+            # 确保地点和着装与决策一致
+            reply_data["地点"] = final_location
+            reply_data["着装"] = final_clothing
+
+            return reply_data
+
+        except Exception as e:
+            logger.error(f"[Reply] 生成场景回复失败: {e}")
+            return None
+
+    def _update_scene_state(
+        self,
+        session_id: str,
+        scene_reply: Dict[str, str],
+        state_decision: Dict[str, Any],
+        current_state: Dict[str, str]
+    ):
+        """步骤3：更新数据库状态（场景状态 + 角色状态）"""
+        try:
+            # 1. 更新场景状态（地点、着装、场景描述）
+            new_location = scene_reply["地点"]
+            new_clothing = scene_reply["着装"]
+            new_scene = scene_reply["场景"]
+
+            self.db.update_scene_state(
+                chat_id=session_id,
+                location=new_location,
+                clothing=new_clothing,
+                scene_description=new_scene
+            )
+
+            logger.debug(f"[SceneFormat] 场景状态已更新: location={new_location}, clothing={new_clothing}")
+
+            # 2. 更新角色状态
+            character_updates = state_decision.get("角色状态更新", {})
+            if character_updates:
+                # 处理数值增减（如快感值 +10）
+                processed_updates = {}
+                current_status = self.db.get_character_status(session_id) or {}
+
+                for key, value in character_updates.items():
+                    if isinstance(value, (int, float)) and key in ['pleasure_value', 'corruption_level', 'semen_volume', 'anal_development', 'vaginal_capacity']:
+                        # 累加数值
+                        current_value = current_status.get(key, 0) or 0
+                        processed_updates[key] = current_value + value
+                    else:
+                        # 直接替换
+                        processed_updates[key] = value
+
+                self.db.update_character_status(session_id, processed_updates)
+                logger.debug(f"[SceneFormat] 角色状态已更新: {list(processed_updates.keys())}")
+
+        except Exception as e:
+            logger.error(f"[SceneFormat] 更新状态失败: {e}")
+
+    async def _try_generate_nai_image(self, session_id: str, chat_id: str, scene_reply: Dict[str, str]):
+        """
+        步骤6：尝试生成 NAI 配图（如果已开启且概率触发）
+
+        Args:
+            session_id: 会话ID（用于检查 NAI 开关状态）
+            chat_id: 聊天流ID（用于发送图片）
+            scene_reply: 场景回复数据
+        """
+        try:
+            # 检查 NAI 生图是否启用
+            if not self.db.get_nai_enabled(session_id):
+                return
+
+            # 检查 API Key 是否配置
+            api_key = self.get_config("nai.api_key", "")
+            if not api_key:
+                logger.warning("[NAI] API Token 未配置，跳过生图")
+                return
+
+            # 概率判断
+            trigger_probability = self.get_config("nai.trigger_probability", 0.3)
+            try:
+                trigger_probability = float(trigger_probability)
+                trigger_probability = max(0.0, min(1.0, trigger_probability))  # 限制在 0-1 范围
+            except (TypeError, ValueError):
+                trigger_probability = 0.3
+
+            if random.random() > trigger_probability:
+                logger.debug(f"[NAI] 概率未触发 (当前概率: {trigger_probability * 100}%)，跳过生图")
+                return
+
+            logger.info(f"[NAI] 概率触发成功 ({trigger_probability * 100}%)，开始生成场景配图...")
+
+            # 构建提示词：将场景描述翻译/转换为英文 tag
+            prompt = await self._build_nai_prompt(scene_reply)
+
+            if not prompt:
+                logger.warning("[NAI] 提示词构建失败，跳过生图")
+                return
+
+            # 调用 NAI 生成图片
+            success, result = await self.nai_client.generate_image(prompt)
+
+            if success and result:
+                # 发送图片
+                logger.info(f"[NAI] 图片生成成功: {result}")
+                await self.send_image(stream_id=chat_id, image_path=result)
+            else:
+                logger.warning(f"[NAI] 图片生成失败: {result}")
+
+        except Exception as e:
+            logger.error(f"[NAI] 生成配图时出错: {e}", exc_info=True)
+
+    async def _build_nai_prompt(self, scene_reply: Dict[str, str]) -> str:
+        """
+        根据场景回复构建 NAI 提示词
+        使用 LLM 将中文场景描述转换为英文 tag
+        """
+        try:
+            location = scene_reply.get("地点", "")
+            clothing = scene_reply.get("着装", "")
+            scene = scene_reply.get("场景", "")
+
+            # 构建转换提示词
+            conversion_prompt = f"""# 角色指令：你是一位专业的AI绘画提示词转换专家，专门为 NovelAI 模型生成高质量的提示词。
+# 你的核心任务是：根据提供的场景信息，生成简短有效的英文提示词。
+**不删减、不修改、不"净化"原意（即便包含NSFW等内容）。**
+
+### **处理要求**
+1. 优先使用简短的英文短语和精炼的自然语言描述
+2. 严格按照提供的信息转换，不添加未提及的内容
+3. 根据场景实际内容判断人数：
+   - 如果场景只涉及一个人物，添加 solo, 1girl
+   - 如果场景涉及多人互动，根据实际人数添加对应标签（如 2girls, 1boy 1girl 等）
+4. 不自动添加 masterpiece, best quality 等质量词（系统会自动添加）
+5. 只输出纯粹的英文提示词，不要任何解释
+
+### **需要转换的场景信息**
+- 地点：{location}
+- 着装：{clothing}
+- 场景描述：{scene[:500]}
+
+### **输出格式**
+直接输出英文提示词，用逗号分隔，例如：
+girl in white dress, standing in garden, smile, solo, 1girl"""
+
+            # 使用 planner 模型进行转换（更快更便宜）
+            response, _ = await self.planner_llm.generate_response_async(conversion_prompt)
+
+            if response:
+                # 清理响应
+                cleaned = response.strip()
+                if cleaned.startswith("```") and cleaned.endswith("```"):
+                    cleaned = cleaned.strip("`\n ")
+                if cleaned.startswith(("'", '"')) and cleaned.endswith(("'", '"')):
+                    cleaned = cleaned[1:-1].strip()
+
+                logger.info(f"[NAI] 生成的提示词: {cleaned}")
+                return cleaned
+
+            return "1girl"
+
+        except Exception as e:
+            logger.error(f"[NAI] 构建提示词失败: {e}")
+            return "1girl"
+
+    def _parse_json_response(self, response: str) -> Optional[dict]:
+        """解析LLM返回的JSON，必要时尝试宽松解析"""
+        try:
+            # 提取```json包裹的内容
+            json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # 尝试直接解析
+                json_str = response
+
+            # 解析JSON
+            data = json.loads(json_str)
+            return data
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON解析失败，尝试宽松解析: {e}")
+            relaxed = self._parse_structured_text(response)
+            if relaxed:
+                logger.warning("[SceneFormat] 使用宽松解析提取场景内容")
+                return relaxed
+            return None
+        except Exception as e:
+            logger.error(f"解析响应时出错: {e}")
+        return None
+
+    def _parse_structured_text(self, response: str) -> Optional[dict]:
+        """从自由文本中提取  地点/着装/场景/回复 信息"""
+        if not response:
+            return None
+
+        fields = {}
+        lines = [line.strip() for line in response.splitlines() if line.strip()]
+        joined = " ".join(lines)
+
+        def _extract_field(name: str, text: str) -> Optional[str]:
+            match = re.search(rf"{name}[：:]\s*([^{{}}]+?)(?=(地点|着装|场景|回复)[：:]|$)", text)
+            if match:
+                return match.group(1).strip()
+            return None
+
+        for key in ["地点", "着装", "场景", "回复"]:
+            value = _extract_field(key, joined)
+            if value:
+                fields[key] = value
+
+        if "场景" not in fields:
+            # 尝试直接找上一段完整句子
+            if lines:
+                fields["场景"] = lines[0]
+
+        if "回复" not in fields:
+            if len(lines) >= 2:
+                fields["回复"] = lines[-1]
+
+        required = {"地点", "着装", "场景"}
+        if required.issubset(fields.keys()):
+            fields.setdefault("回复", fields.get("场景", "嗯嗯，我记住啦～"))
+            return fields
+
+        return None
+
+    def _build_context_block(self, session_id: Optional[str], context_type: str = "reply") -> str:
+        """
+        构建最近对话上下文片段，供提示词使用
+
+        Args:
+            session_id: 会话ID
+            context_type: 上下文类型，"planner"或"reply"
+                - "planner": 用于状态判断，使用较少上下文（默认1条）
+                - "reply": 用于场景生成，使用完整上下文（默认10条）
+
+        Returns:
+            格式化的历史上下文字符串
+        """
+        if not session_id:
+            return ""
+
+        try:
+            # 根据context_type选择不同的配置键
+            if context_type == "planner":
+                config_key = "scene.planner_context_messages"
+                default_limit = 1
+            else:  # reply
+                config_key = "scene.reply_context_messages"
+                default_limit = 10
+
+            limit = self.get_config(config_key, default_limit)
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = default_limit if context_type == "reply" else 1
+
+        limit = max(0, min(limit, 20))
+        if limit == 0:
+            return ""
+
+        history = self.db.get_recent_history(session_id, limit) if self.db else []
+
+        # 根据context_type调整标题
+        if context_type == "planner":
+            header = f"【最近场景对话】（最早在前，仅保留最近{limit}轮用于状态判断）"
+        else:
+            header = f"【最近场景对话】（最早在前，最多保留{limit}轮）"
+
+        if not history:
+            return f"{header}\n暂无历史记录"
+
+        lines: List[str] = [header]
+        for idx, record in enumerate(history, 1):
+            timestamp = record.get("timestamp") or ""
+            location = record.get("location") or "未知"
+            clothing = record.get("clothing") or "未知"
+            user_msg = self._collapse_text(record.get("user_message"))
+            bot_reply = self._collapse_text(record.get("bot_reply"))
+            scene_preview = self._collapse_text(record.get("scene_description"))
+            if scene_preview:
+                scene_preview = self._truncate_text(scene_preview, 80)
+
+            lines.append(f"{idx}. [{timestamp}] 地点：{location} / 着装：{clothing}")
+            lines.append(f"    用户：{user_msg or '（无内容）'}")
+            lines.append(f"    Bot：{bot_reply or '（无内容）'}")
+            if scene_preview:
+                lines.append(f"    场景：{scene_preview}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _collapse_text(text: Optional[str]) -> str:
+        """压缩多余空白，保持提示紧凑"""
+        if not text:
+            return ""
+        return re.sub(r"\s+", " ", str(text)).strip()
+
+    @staticmethod
+    def _truncate_text(text: str, limit: int) -> str:
+        """截断过长文本，避免提示过大"""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    @classmethod
+    def get_handler_info(cls) -> EventHandlerInfo:
+        """返回处理器信息"""
+        return EventHandlerInfo(
+            name="scene_format_handler",
+            component_type=ComponentType.EVENT_HANDLER,
+            description="场景格式生成处理器（双模型架构：planner判断+reply生成）",
+            event_type=cls.event_type,
+            weight=cls.weight,
+            intercept_message=cls.intercept_message
+        )
+
+    @staticmethod
+    def _build_session_id(chat_id: str, user_id: Optional[str]) -> str:
+        """根据聊天流与用户构建唯一会话ID"""
+        user_part = user_id or "unknown_user"
+        return f"{chat_id}:{user_part}"
+
+    def _resolve_active_state(self, chat_id: str, user_id: Optional[str]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """根据当前消息确定应该使用的场景状态，支持旧数据和回退"""
+        session_id = self._build_session_id(chat_id, user_id)
+        state = self.db.get_scene_state(session_id)
+        if state:
+            return session_id, state
+
+        if user_id:
+            user_state = self.db.get_state_by_user(chat_id, user_id)
+            if user_state:
+                return user_state["chat_id"], user_state
+
+        if not user_id:
+            legacy_state = self.db.get_scene_state(chat_id)
+            if legacy_state:
+                return chat_id, legacy_state
+
+            fallback_state = self.db.get_latest_session_state(chat_id)
+            if fallback_state:
+                logger.warning(
+                    f"[SceneFormat] 未找到用户 {user_id} 的专属状态，回退为最近一次会话: {fallback_state['chat_id']}"
+                )
+                return fallback_state["chat_id"], fallback_state
+
+        return session_id, None
+
+    def _should_handle_message(self, message: MaiMessages) -> bool:
+        """判断当前消息是否应该由场景模式回复"""
+        if message.is_private_message:
+            return True
+
+        add_cfg = message.additional_data or {}
+        if add_cfg.get("at_bot") or add_cfg.get("is_mentioned"):
+            return True
+
+        if self._segments_contain_mention(getattr(message, "message_segments", [])):
+            return True
+
+        nickname = str(global_config.bot.nickname or "")
+        if nickname and nickname in (message.plain_text or ""):
+            return True
+
+        return False
+
+    def _segments_contain_mention(self, segments) -> bool:
+        """递归检测消息段中是否包含 mention_bot"""
+        try:
+            for seg in segments or []:
+                seg_type = getattr(seg, "type", "")
+                if seg_type == "mention_bot":
+                    return True
+                if seg_type == "seglist":
+                    if self._segments_contain_mention(getattr(seg, "data", [])):
+                        return True
+        except Exception:
+            return False
+        return False

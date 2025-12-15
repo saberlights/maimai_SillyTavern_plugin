@@ -1,0 +1,40 @@
+{
+  "profiles": {
+    "default": {
+      "prompt_keys": ["prompts"],
+      "prompt_order_keys": ["prompt_order", "promptOrder"],
+      "prompt_order_character_ids": [100001],
+      "prompt_order_use_first": false,
+      "main_identifiers": ["main"],
+      "ignore_identifiers": [
+        "nsfw",
+        "jailbreak",
+        "chatHistory",
+        "worldInfoBefore",
+        "worldInfoAfter",
+        "dialogueExamples",
+        "charDescription",
+        "charPersonality",
+        "scenario",
+        "personaDescription",
+        "enhanceDefinitions"
+      ],
+      "style_detection": {
+        "name_keywords": ["文风", "风格", "✔️", "style"],
+        "identifier_keywords": [],
+        "identifier_prefixes": [],
+        "identifier_suffixes": [],
+        "identifier_whitelist": []
+      },
+      "guideline_detection": {
+        "name_keywords": ["指南", "指引", "guide", "zhinan"],
+        "identifier_whitelist": []
+      },
+      "forbidden_detection": {
+        "name_keywords": ["禁词", "禁用", "banlist", "forbidden"],
+        "identifier_whitelist": []
+      }
+    }
+  },
+  "preset_profiles": {}
+}

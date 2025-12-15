@@ -1,0 +1,131 @@
+{
+  "manifest_version": 1,
+  "name": "麦麦场景格式插件",
+  "version": "1.0.0",
+  "description": "为MaiBot提供沉浸式的场景对话体验，支持日程生成、场景描述和智能状态管理，让对话更具真实感和互动性。",
+  "author": {
+    "name": "MaiBot Team",
+    "url": ""
+  },
+  "license": "AGPL-3.0",
+  "homepage_url": "",
+  "repository_url": "",
+  "keywords": [
+    "场景模式",
+    "沉浸式对话",
+    "日程管理",
+    "状态管理",
+    "双模型",
+    "LLM",
+    "角色扮演",
+    "MaiCore"
+  ],
+  "categories": [
+    "AI",
+    "聊天增强",
+    "角色扮演",
+    "Utility"
+  ],
+  "host_application": {
+    "min_version": "0.11.0",
+    "max_version": "1.0.0"
+  },
+  "default_locale": "zh-CN",
+  "plugin_info": {
+    "is_built_in": false,
+    "plugin_type": "general",
+    "components": [
+      {
+        "type": "command",
+        "name": "场景日程",
+        "description": "根据Bot人设生成一周场景日程安排"
+      },
+      {
+        "type": "command",
+        "name": "scene",
+        "description": "场景模式控制命令，支持on/off/init/status"
+      },
+      {
+        "type": "event_handler",
+        "name": "scene_format_handler",
+        "description": "场景格式生成处理器，使用双模型架构（planner判断+reply生成）"
+      }
+    ],
+    "features": [
+      "✅ 根据Bot人设自动生成一周日程",
+      "✅ 提供 {地点}{着装}{场景} 格式的沉浸式对话",
+      "✅ 智能续接：自动检测历史状态并生成过渡场景",
+      "✅ 双模型架构：Planner模型判断状态变化 + Reply模型生成场景和回复",
+      "✅ 状态持久化：使用SQLite保存日程和场景状态",
+      "✅ 灵活控制：支持启动、关闭、重新初始化",
+      "✅ 时间感知：根据时间差生成不同长度的过渡叙述",
+      "✅ 基于语义的状态判断：LLM理解对话意图而非关键词匹配"
+    ],
+    "dependencies": {
+      "python": [],
+      "system": [],
+      "plugins": []
+    }
+  },
+  "configuration": {
+    "config_file": "config.toml",
+    "auto_generate": true,
+    "sections": [
+      {
+        "name": "plugin",
+        "description": "插件基本配置"
+      },
+      {
+        "name": "bot",
+        "description": "Bot人设配置（身份、爱好，用于生成日程）"
+      },
+      {
+        "name": "logging",
+        "description": "日志配置"
+      }
+    ]
+  },
+  "usage_examples": [
+    {
+      "type": "command",
+      "description": "生成一周场景日程",
+      "example": "/场景日程"
+    },
+    {
+      "type": "command",
+      "description": "启动场景模式（首次或续接）",
+      "example": "/scene on"
+    },
+    {
+      "type": "command",
+      "description": "关闭场景模式",
+      "example": "/scene off"
+    },
+    {
+      "type": "command",
+      "description": "重新初始化场景",
+      "example": "/scene init"
+    },
+    {
+      "type": "command",
+      "description": "查看当前场景状态",
+      "example": "/scene"
+    },
+    {
+      "type": "conversation",
+      "description": "场景对话示例",
+      "example": "用户：今天的课还挺有意思的\nBot：{教室}\n     {校服}\n     {我转过头看着你，笑了笑。教室里很安静，只有笔尖划过纸张的沙沙声。}\n     \n     对呀！今天数学老师讲的那个题目挺有意思的，你听懂了吗？"
+    },
+    {
+      "type": "conversation",
+      "description": "状态变化示例",
+      "example": "用户：我们去图书馆吧\nBot：{走廊}\n     {校服}\n     {我站起身收拾好书包，和你一起走出教室。走廊里人不多，脚步声在安静的空间里回响。}\n     \n     好呀！正好下课了，去图书馆看会书也不错~"
+    },
+    {
+      "type": "resume",
+      "description": "智能续接示例",
+      "example": "用户：/scene on\nBot：✅ 场景模式已启用（续接上次对话）\n\n【时间已过去 8.5 小时】\n下午在图书馆看了会书，然后回宿舍吃了晚饭，洗了澡换了身舒服的衣服。\n\n{宿舍}\n{休闲便服}\n{我坐在电脑前，屏幕上游戏角色正在副本里战斗。房间里开着暖黄的台灯，氛围很放松。}"
+    }
+  ],
+  "id": "MaiBot.scene_format_plugin"
+}

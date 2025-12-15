@@ -1,0 +1,197 @@
+# scene_format_plugin - 自动生成的配置文件
+# 为MaiBot提供沉浸式的场景对话体验，支持日程生成、场景描述和智能状态管理，让对话更具真实感和互动性。
+
+# 插件基本配置
+[plugin]
+
+# 场景格式插件 (必需)
+name = "scene_format_plugin"
+
+# 配置版本
+config_version = "1.0.0"
+
+# 是否启用插件
+enabled = true
+
+
+# 场景相关配置
+[scene]
+
+# 场景描述的最大长度（字符数）
+max_scene_length = 1000
+
+# Planner模型使用的历史上下文条数（状态判断用）
+planner_context_messages = 10
+
+# Reply模型使用的历史上下文条数（场景生成用）
+reply_context_messages = 50
+
+
+# 管理员权限配置
+[admin]
+
+# 管理员用户ID列表
+admin_users = ["137068619"]
+
+# 默认是否启用管理员模式
+default_admin_mode = true
+
+
+# 日志配置
+[logging]
+
+# 日志级别
+# 可选值: DEBUG, INFO, WARNING, ERROR
+level = "INFO"
+
+
+# LLM API 配置
+# 插件可以使用独立的 API 配置，也可以使用 MaiBot 主程序的模型配置
+# 两个模型可以分别配置，灵活组合
+
+[llm.planner]
+# Planner 模型配置（用于状态判断）
+# 支持 OpenAI 兼容的 API 格式
+
+# 是否使用自定义 API
+# true: 使用下方配置的 API
+# false: 使用 MaiBot 主程序的 planner 模型
+use_custom_api = false
+
+# API 基础 URL（必填）
+# 示例: "https://api.openai.com/v1" 或其他兼容服务
+base_url = ""
+
+# API 密钥（必填）
+api_key = ""
+
+# 模型名称（必填）
+# 示例: "gpt-4o", "claude-3-sonnet", "deepseek-chat" 等
+model = ""
+
+# 温度参数（0-2）
+temperature = 0.7
+
+# 最大输出 token 数
+max_tokens = 2048
+
+# 超时时间（秒）
+timeout = 60
+
+# 重试次数
+max_retries = 3
+
+# 重试间隔（秒）
+retry_interval = 1.0
+
+# 自定义参数（可选）
+# 用于传递模型特定的额外参数，如 top_p, frequency_penalty 等
+# 格式: { 参数名 = 值, ... }
+# 示例: { top_p = 0.9, frequency_penalty = 0.5 }
+extra_params = { }
+
+
+[llm.reply]
+# Reply 模型配置（用于场景生成）
+# 支持 OpenAI 兼容的 API 格式
+
+# 是否使用自定义 API
+# true: 使用下方配置的 API
+# false: 使用 MaiBot 主程序的 replyer 模型
+use_custom_api = false
+
+# API 基础 URL（必填）
+# 示例: "https://api.openai.com/v1" 或其他兼容服务
+base_url = ""
+
+# API 密钥（必填）
+api_key = ""
+
+# 模型名称（必填）
+# 示例: "gpt-4o", "claude-3-sonnet", "deepseek-chat" 等
+model = ""
+
+# 温度参数（0-2）
+temperature = 0.9
+
+# 最大输出 token 数
+max_tokens = 4096
+
+# 超时时间（秒）
+timeout = 120
+
+# 重试次数
+max_retries = 3
+
+# 重试间隔（秒）
+retry_interval = 1.0
+
+# 自定义参数（可选）
+# 用于传递模型特定的额外参数，如 top_p, frequency_penalty 等
+# 格式: { 参数名 = 值, ... }
+# 示例: { top_p = 0.95, presence_penalty = 0.3 }
+extra_params = { }
+
+
+# NAI 生图配置
+# 仅在场景模式下可用，通过 /sc nai on 开启
+
+[nai]
+# NAI 4.5 API 配置
+
+# API 基础 URL
+base_url = "https://std.loliyc.com"
+
+# API 端点
+endpoint = "/generate"
+
+# API Token（必填）
+api_key = ""
+
+# 模型名称
+model = "nai-diffusion-4-5-full"
+
+# 生图触发概率（0.0-1.0）
+# 启用 NAI 后，每次场景回复有此概率触发生图
+# 1.0 = 100% 每次都生图，0.5 = 50% 概率，0.0 = 不生图
+trigger_probability = 0.3
+
+# 图片尺寸
+# 可选: "竖图", "横图", "方图" 或具体尺寸如 "1024x1280"
+size = "竖图"
+
+# 采样器
+sampler = "k_euler_ancestral"
+
+# 推理步数
+steps = 28
+
+# 指导强度
+guidance_scale = 5.0
+
+# CFG 参数
+cfg = 0.0
+
+# 噪声调度器
+noise_schedule = "karras"
+
+# 缓存设置（NAI 4.5 设为 1）
+nocache = 1
+
+# 超时时间（秒）
+timeout = 120
+
+# 重试次数
+max_retries = 2
+
+# 重试间隔（秒）
+retry_interval = 2.0
+
+# 自动添加的正面提示词后缀
+prompt_suffix = "masterpiece, best quality"
+
+# 负面提示词
+negative_prompt = "worst quality, low quality, normal quality, lowres, jpeg artifacts, ugly, duplicate, bad anatomy, bad proportions, mutation, deformed, disfigured, morbid, mutilated, poorly drawn hands, poorly drawn face, extra fingers, extra limbs, long neck, text, signature, watermark, username"
+
+# 画师风格预设（可选，留空则不添加）
+artist_preset = ""
