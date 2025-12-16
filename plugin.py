@@ -155,6 +155,36 @@ class SceneFormatPlugin(BasePlugin):
                 default="",
                 description="Planner模型名称"
             ),
+            "planner.temperature": ConfigField(
+                type=float,
+                default=0.7,
+                description="Planner模型温度参数"
+            ),
+            "planner.max_tokens": ConfigField(
+                type=int,
+                default=2048,
+                description="Planner模型最大输出token数"
+            ),
+            "planner.timeout": ConfigField(
+                type=int,
+                default=60,
+                description="Planner模型请求超时时间（秒）"
+            ),
+            "planner.max_retries": ConfigField(
+                type=int,
+                default=3,
+                description="Planner模型最大重试次数"
+            ),
+            "planner.retry_interval": ConfigField(
+                type=float,
+                default=1.0,
+                description="Planner模型重试间隔（秒）"
+            ),
+            "planner.extra_params": ConfigField(
+                type=dict,
+                default={},
+                description="Planner模型额外参数（JSON对象）"
+            ),
             "reply.use_custom_api": ConfigField(
                 type=bool,
                 default=False,
@@ -174,6 +204,36 @@ class SceneFormatPlugin(BasePlugin):
                 type=str,
                 default="",
                 description="Reply模型名称"
+            ),
+            "reply.temperature": ConfigField(
+                type=float,
+                default=0.9,
+                description="Reply模型温度参数"
+            ),
+            "reply.max_tokens": ConfigField(
+                type=int,
+                default=4096,
+                description="Reply模型最大输出token数"
+            ),
+            "reply.timeout": ConfigField(
+                type=int,
+                default=120,
+                description="Reply模型请求超时时间（秒）"
+            ),
+            "reply.max_retries": ConfigField(
+                type=int,
+                default=3,
+                description="Reply模型最大重试次数"
+            ),
+            "reply.retry_interval": ConfigField(
+                type=float,
+                default=1.0,
+                description="Reply模型重试间隔（秒）"
+            ),
+            "reply.extra_params": ConfigField(
+                type=dict,
+                default={},
+                description="Reply模型额外参数（JSON对象）"
             )
         },
         "nai": {
@@ -186,6 +246,11 @@ class SceneFormatPlugin(BasePlugin):
                 type=str,
                 default="https://std.loliyc.com",
                 description="NAI API 地址"
+            ),
+            "endpoint": ConfigField(
+                type=str,
+                default="/generate",
+                description="NAI生图API端点"
             ),
             "trigger_probability": ConfigField(
                 type=float,
@@ -211,6 +276,61 @@ class SceneFormatPlugin(BasePlugin):
                 type=str,
                 default="",
                 description="负面提示词"
+            ),
+            "artist_preset": ConfigField(
+                type=str,
+                default="",
+                description="画师串提示词（直接追加到请求参数中）"
+            ),
+            "sampler": ConfigField(
+                type=str,
+                default="k_euler_ancestral",
+                description="采样器名称"
+            ),
+            "steps": ConfigField(
+                type=int,
+                default=28,
+                description="采样步数（1-50）"
+            ),
+            "guidance_scale": ConfigField(
+                type=float,
+                default=5.0,
+                description="引导比例/CFG Scale（1.0-20.0）"
+            ),
+            "cfg": ConfigField(
+                type=float,
+                default=0.0,
+                description="CFG Rescale值（0.0-1.0）"
+            ),
+            "noise_schedule": ConfigField(
+                type=str,
+                default="karras",
+                description="噪声调度器"
+            ),
+            "nocache": ConfigField(
+                type=int,
+                default=1,
+                description="是否禁用缓存（0或1）"
+            ),
+            "size": ConfigField(
+                type=str,
+                default="竖图",
+                description="图片尺寸（竖图/横图/方图等）"
+            ),
+            "timeout": ConfigField(
+                type=int,
+                default=120,
+                description="NAI请求超时时间（秒）"
+            ),
+            "max_retries": ConfigField(
+                type=int,
+                default=2,
+                description="NAI请求最大重试次数"
+            ),
+            "retry_interval": ConfigField(
+                type=float,
+                default=2.0,
+                description="NAI请求重试间隔（秒）"
             )
         },
         "admin": {

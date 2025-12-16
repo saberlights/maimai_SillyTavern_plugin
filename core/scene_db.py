@@ -274,23 +274,49 @@ class SceneDB:
         if time_minutes is None:
             return None
 
+        # 深夜时段判定（0:00-5:59，即360分钟内）
+        is_late_night = 0 <= time_minutes < 360
+
+        # 深夜休息的默认状态
+        default_late_night = {
+            "activity": "睡觉",
+            "description": "深夜休息",
+            "location": "卧室",
+            "clothing": "睡衣"
+        }
+
+        # 第一步：尝试从当前日期的日程中匹配
         current_day_schedules = self.get_day_schedules(user_id, weekday)
         activity = self._match_activity_from_list(current_day_schedules, time_minutes, True)
         if activity:
             return activity
 
+        # 第二步：尝试从前一天的跨午夜日程中匹配
         previous_day_schedules = self.get_day_schedules(user_id, prev_weekday)
         activity = self._match_activity_from_list(previous_day_schedules, time_minutes, False)
+
         if activity:
+            # 深夜时段特殊检查：如果匹配到的活动名称包含明显的白天时间关键词，
+            # 说明这是一个从白天延续到深夜的活动，但活动描述可能不适合深夜场景
+            # 此时优先使用深夜休息默认状态，避免深夜场景变成"午后"
+            if is_late_night:
+                activity_name = activity.get("activity", "")
+                activity_desc = activity.get("description", "")
+                combined_text = f"{activity_name}{activity_desc}".lower()
+
+                # 检查是否包含明显不适合深夜的时间段关键词
+                daytime_keywords = ["午后", "下午", "上午", "中午", "午间", "白天", "傍晚", "黄昏"]
+                is_daytime_activity = any(kw in combined_text for kw in daytime_keywords)
+
+                if is_daytime_activity:
+                    logger.debug(f"深夜时段匹配到白天活动'{activity_name}'，使用默认深夜休息")
+                    return default_late_night
+
             return activity
 
-        if 0 <= time_minutes < 360:
-            return {
-                "activity": "睡觉",
-                "description": "深夜休息",
-                "location": "卧室",
-                "clothing": "睡衣"
-            }
+        # 第三步：如果无日程匹配，深夜使用默认深夜休息
+        if is_late_night:
+            return default_late_night
 
         return None
 
