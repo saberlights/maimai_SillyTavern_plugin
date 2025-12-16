@@ -43,37 +43,38 @@ class HelpCommand(BaseCommand):
 /sc off          - 关闭场景模式（保留状态）
 /sc init         - 重新初始化（根据日程）
 /sc init <描述>  - 自定义初始化场景
-/sc              - 查看当前场景状态
 
 【状态管理】
-/sc status       - 查看角色状态栏
+/sc status         - 查看角色状态栏
+/sc status history - 查看状态变化历史
+/sc status reset   - 重置角色状态到初始值
 
 【NAI 生图】
-/sc nai on       - 开启场景配图（概率触发）
+/sc nai on       - 开启场景配图（智能触发）
 /sc nai off      - 关闭场景配图
 /sc nai          - 查看开关状态
 
 【日程管理】
-/sc 日程         - 生成今日日程
-/sc schedule     - 同上
+/sc 日程           - 生成今日日程
+/sc schedule       - 同上
+/sc schedule view  - 查看当前日程
+（日程每天自动生成，默认凌晨5点）
 
-【预设管理】
-/sc preset import <文件>  - 导入预设
-/sc preset list           - 列出所有预设和文风
-/sc preset use <文风ID>   - 激活文风
-/sc preset status         - 查看当前文风
-/sc preset clear          - 清除文风
+【文风管理】
+/sc style list      - 列出所有文风
+/sc style use <n>   - 选择文风（序号或名称）
+/sc style clear     - 清除文风
 
 【管理员】
 /sc admin on/off  - 开启/关闭管理员模式
 
 【快速开始】
-1. /sc 日程              # 生成日程
-2. /sc on               # 启动场景
-3. /sc nai on           # 开启配图（可选）
-4. /sc nai off          # 关闭配图
+1. /sc 日程         # 生成日程
+2. /sc style use 1  # 选择文风（可选）
+3. /sc on          # 启动场景
+4. /sc nai on      # 开启配图（可选）
 
-详细文档: README.md"""
+提示: 启动场景后，@bot 或私聊即可进行场景对话"""
 
         await self.send_text(reply)
         return True, reply, 2

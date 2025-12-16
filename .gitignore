@@ -29,6 +29,9 @@ __pycache__/
 *.swo
 *~
 
+# 日志文件
+logs/
+
 # 系统文件
 .DS_Store
 Thumbs.db

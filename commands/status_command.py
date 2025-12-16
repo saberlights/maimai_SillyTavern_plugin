@@ -13,11 +13,11 @@ logger = get_logger("status_command")
 
 
 class StatusCommand(BaseCommand):
-    """状态栏显示命令 - /sc status"""
+    """状态栏显示命令 - /sc status [history|reset]"""
 
     command_name = "scene_status"
-    command_description = "显示角色状态栏"
-    command_pattern = r"^/s(?:cene|c)\s+status.*$"
+    command_description = "显示角色状态栏，支持 history 和 reset 子命令"
+    command_pattern = r"^/s(?:cene|c)\s+status(?:\s+(?P<subcommand>\w+))?.*$"
 
     def __init__(self, message: MessageRecv, plugin_config: Optional[dict] = None):
         super().__init__(message, plugin_config)
@@ -43,6 +43,18 @@ class StatusCommand(BaseCommand):
             await self.send_text("❌ 当前会话已开启管理员模式，仅管理员可使用")
             return False, "没有权限", 2
 
+        # 解析子命令
+        subcommand = self.matched_groups.get("subcommand", "").lower() if self.matched_groups else ""
+
+        if subcommand == "history":
+            return await self._handle_history(session_id)
+        elif subcommand == "reset":
+            return await self._handle_reset(session_id)
+        else:
+            return await self._handle_status(session_id)
+
+    async def _handle_status(self, session_id: str) -> Tuple[bool, Optional[str], int]:
+        """显示当前状态"""
         # 获取角色状态
         status = self.db.get_character_status(session_id)
 
@@ -58,6 +70,55 @@ class StatusCommand(BaseCommand):
 
         # 格式化状态栏（精简易读）
         reply = self._format_status(status)
+        await self.send_text(reply)
+        return True, reply, 2
+
+    async def _handle_history(self, session_id: str) -> Tuple[bool, Optional[str], int]:
+        """显示状态变化历史"""
+        # 获取最近的场景历史
+        history = self.db.get_recent_history(session_id, limit=10)
+
+        if not history:
+            reply = "暂无状态历史记录"
+            await self.send_text(reply)
+            return True, reply, 2
+
+        lines = ["━━━ 状态历史 ━━━\n"]
+
+        for idx, record in enumerate(history, 1):
+            timestamp = record.get("timestamp", "未知时间")
+            location = record.get("location", "未知")
+            clothing = record.get("clothing", "未知")
+            user_msg = record.get("user_message", "")[:30]
+            if len(record.get("user_message", "")) > 30:
+                user_msg += "..."
+
+            lines.append(f"{idx}. [{timestamp}]")
+            lines.append(f"   📍 {location} | 👗 {clothing}")
+            if user_msg:
+                lines.append(f"   💬 {user_msg}")
+            lines.append("")
+
+        lines.append("━━━━━━━━━━━━━━")
+        reply = "\n".join(lines)
+        await self.send_text(reply)
+        return True, reply, 2
+
+    async def _handle_reset(self, session_id: str) -> Tuple[bool, Optional[str], int]:
+        """重置角色状态到初始值"""
+        # 检查是否存在状态
+        status = self.db.get_character_status(session_id)
+
+        if not status:
+            reply = "未找到角色状态，无需重置"
+            await self.send_text(reply)
+            return True, reply, 2
+
+        # 清除并重新初始化
+        self.db.clear_character_status(session_id)
+        self.db.init_character_status(session_id)
+
+        reply = "✅ 角色状态已重置为初始值\n\n快感值、污染度、湿润度等已归零\n生理状态已恢复正常"
         await self.send_text(reply)
         return True, reply, 2
 
@@ -146,7 +207,7 @@ class StatusCommand(BaseCommand):
         lines.append("\n━━━━━━━━━━━━━━")
         return "\n".join(lines)
 
-    def _safe_load_json(self, text: str) -> any:
+    def _safe_load_json(self, text: str) -> Any:
         """安全加载JSON字符串"""
         try:
             return json.loads(text) if text else {}

@@ -4,7 +4,7 @@
 import json
 import re
 from datetime import datetime
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.base.component_types import CommandInfo, ComponentType
 from src.chat.message_receive.message import MessageRecv
@@ -71,7 +71,7 @@ class SceneCommand(BaseCommand):
             return result
         elif subcommand == "":
             # /sc 不带参数，提示使用帮助
-            reply = "请指定子命令：\n• /sc on - 启动场景模式\n• /sc off - 关闭场景模式\n• /sc init - 重新初始化场景\n• /sc status - 查看角色状态\n• /sc help - 查看详细帮助"
+            reply = "请指定子命令：\n• /sc on - 启动场景模式\n• /sc off - 关闭场景模式\n• /sc init - 重新初始化场景\n• /sc status - 查看角色状态\n• /sc style - 文风管理\n• /sc nai - NAI 生图控制\n• /sc help - 查看详细帮助"
             await self.send_text(reply)
             return True, reply, 2
         else:
@@ -190,27 +190,13 @@ class SceneCommand(BaseCommand):
 
         return await self._send_command_reply(reply)
 
-    async def _initialize_scene_without_enable(self, session_id: str, user_id: str) -> Tuple[bool, str, int]:
-        """初始化场景但不启用"""
-        try:
-            # 使用全局日程
-            global_user_id = "global_schedule"
+    def _build_init_prompt(self, activity: Dict[str, Any], current_time: datetime) -> str:
+        """构建场景初始化的 prompt（公共方法，避免重复）"""
+        bot_name = global_config.bot.nickname
+        bot_personality = getattr(global_config.personality, "personality", "")
+        bot_reply_style = getattr(global_config.personality, "reply_style", "")
 
-            # 获取当前活动
-            current_time = datetime.now()
-            activity = self.db.get_current_activity(global_user_id, current_time)
-
-            if not activity:
-                logger.warning(f"[SceneCommand] 未找到全局日程")
-                return await self._send_command_reply("❌ 未找到当前日程，请先使用 /场景日程 生成日程表", success=False)
-
-            # 获取bot人设
-            bot_name = global_config.bot.nickname
-            bot_personality = getattr(global_config.personality, "personality", "")
-            bot_reply_style = getattr(global_config.personality, "reply_style", "")
-
-            # 构建初始化prompt
-            prompt = f"""【你的身份】
+        return f"""【你的身份】
 你是 {bot_name}
 
 【性格特质与身份】
@@ -267,7 +253,29 @@ class SceneCommand(BaseCommand):
 
 注意：场景内容中使用 \\n\\n 表示段落换行（两个换行符）"""
 
-            # 应用完整预设（包括主提示、指南、禁词表、文风）
+    async def _do_initialize_scene(self, session_id: str, user_id: str, enable: bool = True) -> Tuple[bool, str, int]:
+        """
+        执行场景初始化的核心逻辑（公共方法）
+
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+            enable: 是否启用场景模式
+
+        Returns:
+            (success, reply, intercept_level)
+        """
+        try:
+            # 获取当前活动
+            current_time = datetime.now()
+            activity = self.db.get_current_activity("global_schedule", current_time)
+
+            if not activity:
+                logger.warning(f"[SceneCommand] 未找到全局日程")
+                return await self._send_command_reply("❌ 未找到当前日程，请先使用 /sc 日程 生成日程表", success=False)
+
+            # 构建并增强 prompt
+            prompt = self._build_init_prompt(activity, current_time)
             enhanced_prompt = self.preset_manager.build_full_preset_prompt(
                 base_prompt=prompt,
                 include_main=True,
@@ -276,18 +284,16 @@ class SceneCommand(BaseCommand):
             )
             logger.info(f"初始化Prompt (with full preset):\n{enhanced_prompt}")
 
-            # 调用LLM
+            # 调用 LLM
             llm_response, _ = await self.llm.generate_response_async(enhanced_prompt)
-
             logger.info(f"LLM返回:\n{llm_response}")
 
-            # 解析JSON
+            # 解析 JSON
             scene_data = self._parse_json_response(llm_response)
-
             if not scene_data:
                 return await self._send_command_reply("❌ 场景初始化失败，请稍后重试", success=False)
 
-            # 保存到数据库（但不启用）
+            # 保存到数据库
             self.db.create_scene_state(
                 chat_id=session_id,
                 location=scene_data["地点"],
@@ -297,17 +303,29 @@ class SceneCommand(BaseCommand):
                 user_id=user_id
             )
 
-            # 立即将 enabled 设为 0（确保不启用）
-            self.db.disable_scene(session_id)
+            # 根据参数决定是否启用
+            if not enable:
+                self.db.disable_scene(session_id)
 
-            # 初始化角色状态（如果不存在）
+            # 初始化角色状态
             self.db.init_character_status(session_id)
 
-            # 处理场景中的换行符
+            # 格式化场景文本
             scene_text = scene_data['场景'].replace('\\n\\n', '\n\n').replace('\\n', '\n')
 
-            # 返回初始化结果（不启用）
-            reply = f"""✅ 场景已初始化（未启用）
+            # 构建回复
+            if enable:
+                reply = f"""✅ 场景模式已启用
+
+📍 地点：{scene_data['地点']}
+👗 着装：{scene_data['着装']}
+
+🎬 场景：
+{scene_text}
+
+现在你可以开始场景对话了~"""
+            else:
+                reply = f"""✅ 场景已初始化（未启用）
 
 📍 地点：{scene_data['地点']}
 👗 着装：{scene_data['着装']}
@@ -323,138 +341,14 @@ class SceneCommand(BaseCommand):
             logger.error(f"初始化场景时出错: {e}", exc_info=True)
             return await self._send_command_reply(f"❌ 场景初始化失败: {str(e)}", success=False)
 
+    async def _initialize_scene_without_enable(self, session_id: str, user_id: str) -> Tuple[bool, str, int]:
+        """初始化场景但不启用"""
+        return await self._do_initialize_scene(session_id, user_id, enable=False)
+
     async def _initialize_scene(self, session_id: str, user_id: str) -> Tuple[bool, str, int]:
-        """初始化场景（首次启动或重新初始化）"""
-        try:
-            # 发送处理中反馈
-            await self.send_text("🎬 正在初始化场景...")
-
-            # 使用全局日程
-            global_user_id = "global_schedule"
-
-            # 获取当前活动
-            current_time = datetime.now()
-            activity = self.db.get_current_activity(global_user_id, current_time)
-
-            if not activity:
-                logger.warning(f"[SceneCommand] 未找到全局日程")
-                return await self._send_command_reply("❌ 未找到当前日程，请先使用 /场景日程 生成日程表", success=False)
-
-            # 获取bot人设
-            bot_name = global_config.bot.nickname
-            bot_personality = getattr(global_config.personality, "personality", "")
-            bot_reply_style = getattr(global_config.personality, "reply_style", "")
-
-            # 构建初始化prompt
-            prompt = f"""【你的身份】
-你是 {bot_name}
-
-【性格特质与身份】
-{bot_personality}
-
-【回复风格】
-{bot_reply_style}
-
-【当前时间和活动】
-现在是 {current_time.strftime("%H:%M")}（{self._get_time_period(current_time)}）
-根据日程，你现在应该在：{activity['activity']}
-活动描述：{activity.get('description', '无')}
-
-【建议状态】
-建议地点：{activity.get('location', '未知')}
-建议着装：{activity.get('clothing', '普通装扮')}
-
-【初始化任务】
-请生成你此时此刻的状态，用小说化的方式呈现。
-
-1. 地点：基于建议地点，可微调（3-8字，简洁）
-2. 着装：基于建议着装，可微调（10-20字，简短描述）
-3. 场景：用第一人称（"我"）创作一段小说化的场景描写（150-300字）
-
-【场景描写要求】
-必须包含以下元素，像写小说一样：
-
-✦ 环境描写：描绘周围的场景、氛围、光线、声音等细节
-✦ 动作描写：细腻刻画你当前的动作、表情、姿态
-✦ 心理描写：适当融入内心想法、感受（可选）
-✦ 合理分段：使用换行符分段，让叙述节奏自然流畅
-
-【写作风格】
-- 使用生动的细节描写，避免空洞抽象
-- 句式富有变化，长短结合
-- 营造画面感和沉浸感
-- 避免陈词滥调，力求新鲜自然
-
-【分段建议】
-- 第一段：环境/氛围描写
-- 第二段：我的动作和状态描写
-- （可选第三段）：心理活动或补充描写
-
-【输出格式】
-严格按照JSON格式输出：
-
-```json
-{{
-  "地点": "...",
-  "着装": "...",
-  "场景": "第一段场景描写\\n\\n第二段场景描写\\n\\n第三段场景描写（如有）"
-}}
-```
-
-注意：场景内容中使用 \\n\\n 表示段落换行（两个换行符）"""
-
-            # 应用完整预设（包括主提示、指南、禁词表、文风）
-            enhanced_prompt = self.preset_manager.build_full_preset_prompt(
-                base_prompt=prompt,
-                include_main=True,
-                include_guidelines=True,
-                include_style=True
-            )
-            logger.info(f"初始化Prompt (with full preset):\n{enhanced_prompt}")
-
-            # 调用LLM
-            llm_response, _ = await self.llm.generate_response_async(enhanced_prompt)
-
-            logger.info(f"LLM返回:\n{llm_response}")
-
-            # 解析JSON
-            scene_data = self._parse_json_response(llm_response)
-
-            if not scene_data:
-                return await self._send_command_reply("❌ 场景初始化失败，请稍后重试", success=False)
-
-            # 保存到数据库
-            self.db.create_scene_state(
-                chat_id=session_id,
-                location=scene_data["地点"],
-                clothing=scene_data["着装"],
-                scene_description=scene_data["场景"],
-                activity=activity["activity"],
-                user_id=user_id
-            )
-
-            # 初始化角色状态（如果不存在）
-            self.db.init_character_status(session_id)
-
-            # 处理场景中的换行符
-            scene_text = scene_data['场景'].replace('\\n\\n', '\n\n').replace('\\n', '\n')
-
-            # 返回初始化结果
-            reply = f"""✅ 场景模式已启用
-
-📍 地点：{scene_data['地点']}
-👗 着装：{scene_data['着装']}
-
-🎬 场景：
-{scene_text}
-
-现在你可以开始场景对话了~"""
-
-            return await self._send_command_reply(reply)
-
-        except Exception as e:
-            logger.error(f"初始化场景时出错: {e}", exc_info=True)
-            return await self._send_command_reply(f"❌ 场景初始化失败: {str(e)}", success=False)
+        """初始化场景并启用"""
+        await self.send_text("🎬 正在初始化场景...")
+        return await self._do_initialize_scene(session_id, user_id, enable=True)
 
     async def _resume_scene(self, session_id: str, user_id: str, last_state: dict) -> Tuple[bool, str, int]:
         """续接场景（有历史状态）"""
@@ -468,10 +362,14 @@ class SceneCommand(BaseCommand):
 
             if not activity:
                 logger.warning(f"[SceneCommand] 未找到全局日程（续接模式）")
-                return await self._send_command_reply("❌ 未找到当前日程，请先使用 /场景日程 生成日程表", success=False)
+                return await self._send_command_reply("❌ 未找到当前日程，请先使用 /sc 日程 生成日程表", success=False)
 
-            # 计算时间差
-            last_time = datetime.strptime(last_state['last_update_time'], "%Y-%m-%d %H:%M:%S")
+            # 计算时间差（使用多格式解析）
+            from ..core.utils import parse_datetime
+            last_time = parse_datetime(last_state['last_update_time'])
+            if not last_time:
+                # 解析失败，使用当前时间作为回退
+                last_time = current_time
             time_diff_hours = (current_time - last_time).total_seconds() / 3600
 
             # 如果时间差很小（<30分钟），直接续接
@@ -496,6 +394,7 @@ class SceneCommand(BaseCommand):
                 return await self._send_command_reply(reply)
 
             # 时间差较大，需要生成过渡
+            await self.send_text("🎬 正在生成场景过渡...")
             bot_name = global_config.bot.nickname
             bot_personality = getattr(global_config.personality, "personality", "")
             bot_reply_style = getattr(global_config.personality, "reply_style", "")

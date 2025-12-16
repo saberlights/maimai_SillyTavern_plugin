@@ -3,7 +3,7 @@
 """
 import json
 import re
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.base.component_types import CommandInfo, ComponentType
 from src.chat.message_receive.message import MessageRecv
@@ -136,6 +136,9 @@ class CustomInitCommand(BaseCommand):
                 user_id=user_id
             )
             self.db.disable_scene(session_id)
+
+            # 初始化角色状态
+            self.db.init_character_status(session_id)
 
             # 处理换行符
             scene_text = scene_data['场景'].replace('\\n\\n', '\n\n').replace('\\n', '\n')
