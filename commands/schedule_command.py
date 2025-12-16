@@ -75,10 +75,12 @@ class ScheduleGenerateCommand(BaseCommand):
                 await self.send_text(error_msg)
                 return False, "JSON解析失败", 2
 
-            # 5. 保存到数据库（保存为今天的日程，使用全局 user_id）
+            # 5. 保存到数据库（仅保存当天，先清理旧数据）
             from datetime import datetime
             today_weekday = datetime.now().weekday()  # 0=Monday, 6=Sunday
 
+            # 确保旧日程不会跨天残留
+            self.db.clear_user_schedules(global_user_id)
             for item in schedules["schedule"]:
                 self.db.save_schedule(global_user_id, today_weekday, item)
 

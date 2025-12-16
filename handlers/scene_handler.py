@@ -132,7 +132,8 @@ class SceneFormatHandler(BaseEventHandler):
                 session_id=session_id,
                 scene_reply=scene_reply,
                 state_decision=state_decision,
-                current_state=current_state
+                current_state=current_state,
+                activity_summary=self._derive_last_activity(user_message, state_decision, scene_reply)
             )
 
             # 步骤4：记录历史
@@ -142,7 +143,7 @@ class SceneFormatHandler(BaseEventHandler):
                 clothing=scene_reply["着装"],
                 scene_description=scene_reply["场景"],
                 user_message=user_message,
-                bot_reply=scene_reply["回复"]
+                bot_reply=scene_reply["场景"]  # 使用场景内容作为回复
             )
 
             # 步骤5：格式化输出（支持多段落）
@@ -1081,7 +1082,7 @@ class SceneFormatHandler(BaseEventHandler):
 ✦ 环境描写：可描绘周围的场景、氛围、光线、声音等细节
 ✦ 动作描写：细腻刻画人物的动作、表情、姿态变化
 ✦ 身体感受：根据角色状态描写身体反应（如果有必要）
-✦ 语言描写：使用引号包裹
+✦ 语言描写：生成角色间合理的对话，用引号包裹
 ✦ 合理分段：使用换行符分段，让叙述节奏自然流畅
 
 【输出格式】
@@ -1091,8 +1092,7 @@ class SceneFormatHandler(BaseEventHandler):
 {{
   "地点": "{final_location}",
   "着装": "{final_clothing}",
-  "场景": "第一段场景描写\\n\\n第二段场景描写\\n\\n第三段场景描写（如有）",
-  "回复": "与场景保持一致"
+  "场景": "第一段场景描写\\n\\n第二段场景描写\\n\\n第三段场景描写（如有）"
 }}
 ```
 
@@ -1122,14 +1122,11 @@ class SceneFormatHandler(BaseEventHandler):
                 return None
 
             # 验证必要字段
-            required_fields = ["地点", "着装", "场景", "回复"]
+            required_fields = ["地点", "着装", "场景"]
             for field in required_fields:
                 if field not in reply_data:
                     logger.error(f"[Reply] 缺少字段: {field}")
                     return None
-
-            if not reply_data.get("回复"):
-                reply_data["回复"] = reply_data["场景"]
 
             # 确保地点和着装与决策一致
             reply_data["地点"] = final_location
@@ -1146,7 +1143,8 @@ class SceneFormatHandler(BaseEventHandler):
         session_id: str,
         scene_reply: Dict[str, str],
         state_decision: Dict[str, Any],
-        current_state: Dict[str, str]
+        current_state: Dict[str, str],
+        activity_summary: Optional[str] = None
     ):
         """步骤3：更新数据库状态（场景状态 + 角色状态）"""
         try:
@@ -1159,7 +1157,8 @@ class SceneFormatHandler(BaseEventHandler):
                 chat_id=session_id,
                 location=new_location,
                 clothing=new_clothing,
-                scene_description=new_scene
+                scene_description=new_scene,
+                activity=activity_summary
             )
 
             logger.debug(f"[SceneFormat] 场景状态已更新: location={new_location}, clothing={new_clothing}")
@@ -1185,6 +1184,25 @@ class SceneFormatHandler(BaseEventHandler):
 
         except Exception as e:
             logger.error(f"[SceneFormat] 更新状态失败: {e}")
+
+    def _derive_last_activity(self, user_message: str, state_decision: Dict[str, Any], scene_reply: Dict[str, str]) -> str:
+        """根据状态变化和用户消息生成简短的最后活动描述"""
+        if state_decision.get("地点变化"):
+            location = scene_reply.get("地点", "")
+            return f"移动到{location}" if location else "地点变更"
+        if state_decision.get("着装变化"):
+            clothing = scene_reply.get("着装", "")
+            return f"换装为{clothing}" if clothing else "更换着装"
+
+        condensed_user = self._collapse_text(user_message)
+        if condensed_user:
+            return self._truncate_text(condensed_user, 40)
+
+        scene_excerpt = self._collapse_text(scene_reply.get("场景"))
+        if scene_excerpt:
+            return self._truncate_text(scene_excerpt, 40)
+
+        return "场景更新"
 
     async def _try_generate_nai_image(self, session_id: str, scene_reply: Dict[str, str]) -> Optional[str]:
         """
@@ -1361,7 +1379,7 @@ girl in room, sitting, solo, 1girl
         return None
 
     def _parse_structured_text(self, response: str) -> Optional[dict]:
-        """从自由文本中提取  地点/着装/场景/回复 信息"""
+        """从自由文本中提取地点/着装/场景信息"""
         if not response:
             return None
 
@@ -1370,12 +1388,12 @@ girl in room, sitting, solo, 1girl
         joined = " ".join(lines)
 
         def _extract_field(name: str, text: str) -> Optional[str]:
-            match = re.search(rf"{name}[：:]\s*([^{{}}]+?)(?=(地点|着装|场景|回复)[：:]|$)", text)
+            match = re.search(rf"{name}[：:]\s*([^{{}}]+?)(?=(地点|着装|场景)[：:]|$)", text)
             if match:
                 return match.group(1).strip()
             return None
 
-        for key in ["地点", "着装", "场景", "回复"]:
+        for key in ["地点", "着装", "场景"]:
             value = _extract_field(key, joined)
             if value:
                 fields[key] = value
@@ -1385,13 +1403,8 @@ girl in room, sitting, solo, 1girl
             if lines:
                 fields["场景"] = lines[0]
 
-        if "回复" not in fields:
-            if len(lines) >= 2:
-                fields["回复"] = lines[-1]
-
         required = {"地点", "着装", "场景"}
         if required.issubset(fields.keys()):
-            fields.setdefault("回复", fields.get("场景", "嗯嗯，我记住啦～"))
             return fields
 
         return None

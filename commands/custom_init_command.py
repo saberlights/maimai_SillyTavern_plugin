@@ -3,7 +3,6 @@
 """
 import json
 import re
-from datetime import datetime
 from typing import Tuple, Optional
 from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.base.component_types import CommandInfo, ComponentType
@@ -122,7 +121,12 @@ class CustomInitCommand(BaseCommand):
                 return False, reply, 2
 
             # 保存到数据库（不启用）
+            nai_enabled = self.db.get_nai_enabled(session_id)
             self.db.clear_scene_state(session_id)
+            self.db.clear_scene_history(session_id)
+            self.db.clear_character_status(session_id)
+            if nai_enabled:
+                self.db.set_nai_enabled(session_id, True)
             self.db.create_scene_state(
                 chat_id=session_id,
                 location=scene_data["地点"],

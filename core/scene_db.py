@@ -403,7 +403,12 @@ class SceneDB:
 
     def create_scene_state(self, chat_id: str, location: str, clothing: str,
                           scene_description: str, activity: str, user_id: str):
-        """创建场景状态"""
+        """创建场景状态，保留已有的附加字段（如 NAI 开关）"""
+        existing_state = self.get_scene_state(chat_id)
+        nai_enabled = 0
+        if existing_state:
+            nai_enabled = existing_state.get("nai_enabled", 0) or 0
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -413,9 +418,21 @@ class SceneDB:
             cursor.execute("""
                 INSERT OR REPLACE INTO scene_states
                 (chat_id, enabled, location, clothing, scene_description,
-                 last_activity, last_update_time, init_time, user_id, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (chat_id, 1, location, clothing, scene_description, activity, now, now, user_id, now))
+                 last_activity, last_update_time, init_time, user_id, updated_at, nai_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                chat_id,
+                1,
+                location,
+                clothing,
+                scene_description,
+                activity,
+                now,
+                now,
+                user_id,
+                now,
+                nai_enabled
+            ))
             conn.commit()
         except Exception as e:
             logger.error(f"创建场景状态失败: {e}")
@@ -483,6 +500,16 @@ class SceneDB:
         cursor.execute("DELETE FROM scene_states WHERE chat_id = ?", (chat_id,))
         conn.commit()
         conn.close()
+        logger.info(f"场景状态已清空: {chat_id}")
+
+    def clear_scene_history(self, chat_id: str):
+        """清空指定会话的历史记录"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM scene_history WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"场景历史已清空: {chat_id}")
 
     # ==================== 场景历史管理 ====================
 

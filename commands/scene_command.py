@@ -85,6 +85,23 @@ class SceneCommand(BaseCommand):
         user_part = user_id or "unknown_user"
         return f"{chat_id}:{user_part}"
 
+    def _reset_session_storage(self, resolved_id: Optional[str], session_id: str):
+        """清空旧的场景存档，同时保留 NAI 开关"""
+        target_ids = {cid for cid in (resolved_id, session_id) if cid}
+        preserve_nai = False
+        for cid in target_ids:
+            if self.db.get_nai_enabled(cid):
+                preserve_nai = True
+                break
+
+        for cid in target_ids:
+            self.db.clear_scene_state(cid)
+            self.db.clear_scene_history(cid)
+            self.db.clear_character_status(cid)
+
+        if preserve_nai:
+            self.db.set_nai_enabled(session_id, True)
+
     def _get_existing_state(self, chat_id: str, user_id: str, session_id: Optional[str] = None) -> Tuple[str, Optional[dict]]:
         """查找当前用户已存在的场景状态（兼容旧版本）"""
         target_id = session_id or self._build_session_id(chat_id, user_id)
@@ -141,8 +158,8 @@ class SceneCommand(BaseCommand):
         # 发送处理中反馈
         await self.send_text("🎬 正在初始化场景...")
 
-        # 清空历史状态（若不存在则直接忽略）
-        self.db.clear_scene_state(resolved_id)
+        # 清空旧存档并保留必要标识
+        self._reset_session_storage(resolved_id, session_id)
 
         # 重新初始化（但不启用）
         return await self._initialize_scene_without_enable(session_id, user_id)
@@ -271,10 +288,6 @@ class SceneCommand(BaseCommand):
                 return await self._send_command_reply("❌ 场景初始化失败，请稍后重试", success=False)
 
             # 保存到数据库（但不启用）
-            # 先清除旧状态
-            self.db.clear_scene_state(session_id)
-
-            # 创建新状态（enabled=0）
             self.db.create_scene_state(
                 chat_id=session_id,
                 location=scene_data["地点"],
