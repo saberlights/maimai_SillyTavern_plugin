@@ -7,6 +7,7 @@ from src.plugin_system.base.component_types import CommandInfo, ComponentType
 from src.chat.message_receive.message import MessageRecv
 from src.common.logger import get_logger
 from ..core.preset_manager import PresetManager
+from ..core.scene_db import SceneDB
 
 logger = get_logger("style_command")
 
@@ -16,11 +17,12 @@ class PresetCommand(BaseCommand):
 
     command_name = "scene_style"
     command_description = "文风管理命令，支持列表、选择、清除文风"
-    command_pattern = r"^/s(?:cene|c)\s+(?:style|文风|preset).*$"
+    command_pattern = r"^/s(?:cene|c)\s+(?:style|文风|preset|pov|视角).*$"
 
     def __init__(self, message: MessageRecv, plugin_config: Optional[dict] = None):
         super().__init__(message, plugin_config)
-        self.preset_manager = PresetManager()
+        self.db = SceneDB()
+        self.preset_manager = PresetManager(self.db)
 
     async def execute(self) -> Tuple[bool, Optional[str], int]:
         """执行命令"""
@@ -40,9 +42,16 @@ class PresetCommand(BaseCommand):
             await self.send_text("❌ 当前会话已开启管理员模式，仅管理员可使用")
             return False, "没有权限", 2
 
-        # 解析子命令
+        # 解析命令类型
         parts = content.split()
-        # parts[0] = "/sc", parts[1] = "style", parts[2] = 子命令
+        # parts[0] = "/sc", parts[1] = "style"/"pov", parts[2] = 子命令
+        command_type = parts[1].lower() if len(parts) > 1 else ""
+
+        # 视角命令
+        if command_type in ("pov", "视角"):
+            return await self._handle_pov(parts[2:] if len(parts) > 2 else [])
+
+        # 文风命令
         subcommand = parts[2].lower() if len(parts) > 2 else ""
 
         if subcommand in ("list", "ls", "列表"):
@@ -134,25 +143,58 @@ class PresetCommand(BaseCommand):
         await self.send_text(reply)
         return True, reply, 2
 
+    async def _handle_pov(self, args: list) -> Tuple[bool, Optional[str], int]:
+        """处理视角切换命令"""
+        current_pov = self.db.get_perspective()
+
+        if not args:
+            # 显示当前视角
+            reply = f"📷 当前视角: {current_pov}\n\n切换命令:\n• /sc pov 1  - 第一人称\n• /sc pov 3  - 第三人称"
+            await self.send_text(reply)
+            return True, reply, 2
+
+        arg = args[0].lower()
+
+        if arg in ("1", "first", "第一人称", "第一"):
+            self.db.set_perspective("第一人称")
+            reply = "✅ 已切换为第一人称视角"
+            await self.send_text(reply)
+            return True, reply, 2
+        elif arg in ("3", "third", "第三人称", "第三"):
+            self.db.set_perspective("第三人称")
+            reply = "✅ 已切换为第三人称视角"
+            await self.send_text(reply)
+            return True, reply, 2
+        else:
+            reply = f"❌ 无效的视角: {arg}\n\n可用选项:\n• 1 / first / 第一人称\n• 3 / third / 第三人称"
+            await self.send_text(reply)
+            return False, reply, 2
+
     async def _handle_help(self) -> Tuple[bool, Optional[str], int]:
         """显示帮助"""
         current = self.preset_manager.get_current_style()
+        current_pov = self.db.get_perspective()
         status = f"当前文风: {current['name']}" if current else "当前未选择文风"
 
-        reply = f"""📖 文风管理
+        reply = f"""📖 文风与视角管理
 
 {status}
+当前视角: {current_pov}
 
-命令:
+【文风命令】
 • /sc style list    - 列出所有文风
 • /sc style use <n> - 选择文风（序号或名称）
 • /sc style clear   - 清除文风
 • /sc style status  - 查看当前文风
 
+【视角命令】
+• /sc pov      - 查看当前视角
+• /sc pov 1    - 切换为第一人称
+• /sc pov 3    - 切换为第三人称
+
 示例:
-  /sc style use 1
   /sc style use 鲁迅
-  /sc style use 金庸"""
+  /sc pov 1"""
 
         await self.send_text(reply)
         return True, reply, 2

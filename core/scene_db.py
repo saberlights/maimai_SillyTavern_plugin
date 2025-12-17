@@ -741,3 +741,18 @@ class SceneDB:
                 cursor.execute(f"SELECT COUNT(*) FROM {table}")
                 stats[table] = cursor.fetchone()[0]
             return stats
+
+    # ==================== 视角设置管理 ====================
+
+    def set_perspective(self, perspective: str):
+        """设置叙事视角（第一人称/第三人称）"""
+        if perspective not in ("第一人称", "第三人称"):
+            logger.warning(f"无效的视角设置: {perspective}，使用默认值")
+            perspective = "第一人称"
+        self.set_schedule_metadata("global", "perspective", perspective)
+        logger.info(f"叙事视角已设置为: {perspective}")
+
+    def get_perspective(self) -> str:
+        """获取当前叙事视角，默认第一人称"""
+        value = self.get_schedule_metadata("global", "perspective")
+        return value if value in ("第一人称", "第三人称") else "第一人称"

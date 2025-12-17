@@ -182,7 +182,7 @@ class PresetManager:
 
         按原预设架构顺序：
         1. 文风（如果有激活的）
-        2. 格式规则（字数、人称等）
+        2. 格式规则（视角、场景描写等）
         3. 摘要格式
         4. 吐槽格式
         5. 思维链（可选）
@@ -193,58 +193,125 @@ class PresetManager:
         if current:
             style_name = current.get("name")
 
-        return get_suffix_rules(style_name, include_summary, include_tucao, include_cot)
+        # 获取当前视角设置
+        perspective = self.db.get_perspective() if self.db else "第一人称"
 
-    def build_structured_prompt(self, role_info: str, task_info: str,
+        return get_suffix_rules(style_name, include_summary, include_tucao, include_cot, perspective)
+
+    def build_structured_prompt(self, task_info: str,
                                  include_nsfw: bool = True,
                                  include_summary: bool = True,
                                  include_tucao: bool = True,
                                  include_cot: bool = False) -> str:
         """
-        按原预设架构构建完整 prompt
+        构建完整 prompt
 
-        结构：前置规则 → 角色信息 → 任务说明 → 后置规则
+        新结构（逻辑清晰版）：
+        第一部分：泉此方身份与创作规则（告诉AI它是谁、怎么写）
+        第二部分：创作任务（具体要写什么）
 
         Args:
-            role_info: 角色信息（身份、性格、当前状态、历史对话、用户消息）
-            task_info: 任务说明（输出格式要求等）
+            task_info: 创作任务（角色信息、状态、历史、用户消息、输出格式）
             include_nsfw: 是否包含 NSFW 规则
             include_summary: 是否包含摘要格式
             include_tucao: 是否包含吐槽格式
             include_cot: 是否包含思维链
         """
-        prefix = self.get_prefix(include_nsfw)
-        suffix = self.get_suffix(include_summary, include_tucao, include_cot)
+        # 第一部分：泉此方身份与创作规则
+        izumi_rules = self._build_izumi_rules(include_nsfw, include_summary, include_tucao, include_cot)
 
-        # 组装：前置规则 → 角色信息 → 后置规则 → 任务说明（输出格式放最后）
-        # 原预设顺序：角色信息 → 历史 → 用户输入 → 文风 → 指南 → 吐槽 → 字数 → 摘要 → 格式示例
-        parts = [prefix, role_info, suffix, task_info]
+        # 第二部分：创作任务
+        # task_info 由调用方提供，包含角色信息、状态、历史、用户消息、输出格式
+
+        # 组装
+        parts = [izumi_rules, task_info]
 
         # 记录日志
-        components = ["前置规则(防问题"]
+        rule_components = ["主提示"]
         if include_nsfw:
-            components[0] += "+NSFW+创意自由)"
-        else:
-            components[0] += ")"
-        components.append("角色信息")
-
-        suffix_parts = []
+            rule_components.append("NSFW+创意自由")
+        rule_components.append("创作指南")
+        if include_tucao:
+            rule_components.append("吐槽格式")
+        rule_components.append("格式规则")
+        if include_summary:
+            rule_components.append("摘要格式")
+        rule_components.append("禁词表")
         current = self.get_current_style()
         if current:
-            suffix_parts.append(f"文风[{current.get('name')}]")
-        suffix_parts.append("指南")
-        if include_tucao:
-            suffix_parts.append("吐槽")
-        suffix_parts.append("格式")
-        if include_summary:
-            suffix_parts.append("摘要")
-        suffix_parts.append("禁词")
+            rule_components.append(f"文风[{current.get('name')}]")
         if include_cot:
-            suffix_parts.append("思维链")
-        components.append(f"后置规则({'+'.join(suffix_parts)})")
-        components.append("任务说明+输出格式")
+            rule_components.append("思维链")
 
-        logger.info(f"构建结构化 prompt: {' → '.join(components)}")
+        logger.info(f"构建 prompt: [{'+'.join(rule_components)}] → [创作任务]")
+
+        return "\n\n".join(parts)
+
+    def _build_izumi_rules(self, include_nsfw: bool = True,
+                           include_summary: bool = True,
+                           include_tucao: bool = True,
+                           include_cot: bool = False) -> str:
+        """
+        构建泉此方身份与创作规则
+
+        顺序：
+        1. 主提示（身份定义）
+        2. NSFW规则（可选）
+        3. 创意自由（可选）
+        4. 创作指南（ZHINAN）
+        5. 吐槽格式（可选）
+        6. 格式规则（视角、场景描写要点）
+        7. 摘要格式（可选）
+        8. 禁词表
+        9. 文风（如果有激活）
+        10. 思维链（可选）
+        """
+        from .preset_content import (
+            MAIN_PROMPT, NSFW_RULES, CREATIVE_FREEDOM,
+            WRITING_GUIDELINES, TUCAO_FORMAT, SUMMARY_FORMAT,
+            BANNED_WORDS, FORMAT_RULES_TEMPLATE,
+            CHAIN_OF_THOUGHT_LIGHT
+        )
+
+        parts = []
+
+        # 1. 主提示
+        parts.append(MAIN_PROMPT)
+
+        # 2-3. NSFW规则 + 创意自由
+        if include_nsfw:
+            parts.append(NSFW_RULES)
+            parts.append(CREATIVE_FREEDOM)
+
+        # 4. 创作指南
+        parts.append(WRITING_GUIDELINES)
+
+        # 5. 吐槽格式
+        if include_tucao:
+            parts.append(TUCAO_FORMAT)
+
+        # 6. 格式规则（带视角）
+        perspective = self.db.get_perspective() if self.db else "第一人称"
+        parts.append(FORMAT_RULES_TEMPLATE.format(perspective=perspective))
+
+        # 7. 摘要格式
+        if include_summary:
+            parts.append(SUMMARY_FORMAT)
+
+        # 8. 禁词表
+        parts.append(BANNED_WORDS)
+
+        # 9. 文风
+        current = self.get_current_style()
+        if current:
+            from .preset_content import STYLES
+            style_content = STYLES.get(current.get("name"))
+            if style_content:
+                parts.append(style_content)
+
+        # 10. 思维链
+        if include_cot:
+            parts.append(CHAIN_OF_THOUGHT_LIGHT)
 
         return "\n\n".join(parts)
 

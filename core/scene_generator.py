@@ -105,23 +105,22 @@ class SceneGenerator:
 
         status_summary = self.status_formatter.build_status_summary(character_status, compact=False)
 
-        # 构建角色信息和任务说明
-        role_info = self._build_reply_role_info(
+        # 构建完整的创作任务
+        task_info = self._build_reply_task(
             bot_name, bot_personality, bot_reply_style,
             location_instruction, clothing_instruction,
+            final_location, final_clothing,
             status_summary, conversation_context, user_message
         )
-        task_info = self._build_reply_task_info(final_location, final_clothing)
 
         try:
             # 使用新的结构化 prompt 构建方式
             enhanced_prompt = self.preset_manager.build_structured_prompt(
-                role_info=role_info,
                 task_info=task_info,
                 include_nsfw=True,
                 include_summary=True,
                 include_tucao=True,
-                include_cot=False
+                include_cot=True  # 启用轻量思维链
             )
 
             logger.info(f"[Reply] Prompt (enhanced):\n{enhanced_prompt}")
@@ -184,23 +183,21 @@ class SceneGenerator:
         status_summary = self.status_formatter.build_status_summary(character_status, compact=True)
         scene_type_detail = self._get_scene_type_detail(scene_type)
 
-        # 构建角色信息和任务说明
-        role_info = self._build_single_model_role_info(
+        # 构建完整的创作任务
+        task_info = self._build_single_model_task(
             bot_name, bot_personality, bot_reply_style,
             current_location, current_clothing, status_summary,
             conversation_context, user_message, scene_type_detail
         )
-        task_info = self._build_single_model_task_info(current_location, current_clothing)
 
         try:
             # 使用新的结构化 prompt 构建方式
             enhanced_prompt = self.preset_manager.build_structured_prompt(
-                role_info=role_info,
                 task_info=task_info,
                 include_nsfw=True,
                 include_summary=True,
                 include_tucao=True,
-                include_cot=False
+                include_cot=True  # 启用轻量思维链
             )
 
             logger.info(f"[SingleModel] Prompt:\n{enhanced_prompt}")
@@ -366,35 +363,36 @@ class SceneGenerator:
 - 普通日常对话 → "角色状态更新" 必须为 {{}}
 - 数值字段输出增量，不是最终值"""
 
-    def _build_reply_role_info(self, bot_name, bot_personality, bot_reply_style,
-                                location_instruction, clothing_instruction,
-                                status_summary, conversation_context, user_message) -> str:
-        """构建 Reply 模型的角色信息部分"""
-        return f"""【你的身份】
-你是 {bot_name}
+    def _build_reply_task(self, bot_name, bot_personality, bot_reply_style,
+                          location_instruction, clothing_instruction,
+                          final_location, final_clothing,
+                          status_summary, conversation_context, user_message) -> str:
+        """构建双模型模式 Reply 的完整创作任务"""
+        return f"""=== 创作任务 ===
 
-【性格特质与身份】
+【要创作的角色】
+角色名：{bot_name}
+
+【角色性格特质】
 {bot_personality}
 
-【回复风格】
+【角色回复风格】
 {bot_reply_style}
 
-【状态决策结果】
+【当前场景状态】
 {location_instruction}
 {clothing_instruction}
 
-【当前角色状态】（你的回复应当体现这些状态）
+【角色身体/心理状态】（创作时必须体现这些状态）
 {status_summary}
 
 【历史对话】
 {conversation_context or "暂无历史记录"}
 
 【用户消息】
-{user_message}"""
+{user_message}
 
-    def _build_reply_task_info(self, final_location, final_clothing) -> str:
-        """构建 Reply 模型的任务说明部分"""
-        return f"""【任务】
+【任务】
 根据以上信息，生成完整的小说化场景回复。
 
 **重要提醒**：
@@ -405,13 +403,6 @@ class SceneGenerator:
 1. 地点：{final_location}
 2. 着装：{final_clothing}
 3. 场景：创作一段小说化的场景描写
-
-【场景描写要求】
-✦ 环境描写：描绘周围的场景、氛围、光线、声音等细节
-✦ 动作描写：细腻刻画人物的动作、表情、姿态变化
-✦ 身体感受：根据角色状态描写身体反应
-✦ 语言描写：生成角色间合理的对话，用引号包裹
-✦ 合理分段：使用换行符分段
 
 【智能配图】
 判断标准：这个场景画成图，和之前会有明显不同吗？
@@ -432,7 +423,6 @@ nai_prompt 要求（建议配图=true时必填）：
   * 必须包含：人数(1girl)、具体姿势、表情、当前服装状态、环境
   * 根据角色状态：快感高→flushed/panting/trembling/ahegao，出汗→sweating
   * 不加质量词
-  * 示例："1girl, {final_location}, {final_clothing}, sitting on bed, leaning forward, blushing, shy smile"
 
 【输出格式】
 严格按照JSON格式输出：
@@ -442,38 +432,42 @@ nai_prompt 要求（建议配图=true时必填）：
   "地点": "{final_location}",
   "着装": "{final_clothing}",
   "场景": "第一段场景描写\\n\\n第二段场景描写\\n\\n第三段场景描写（如有）",
-  "建议配图": true,
-  "nai_prompt": "1girl, 英文提示词..."
+  "建议配图": ,
+  "nai_prompt": ""
 }}
 ```"""
 
-    def _build_single_model_role_info(self, bot_name, bot_personality, bot_reply_style,
-                                        current_location, current_clothing, status_summary,
-                                        conversation_context, user_message, scene_type_detail) -> str:
-        """构建单模型模式的角色信息部分"""
-        return f"""【你的身份】
-你是 {bot_name}
+    def _build_single_model_task(self, bot_name, bot_personality, bot_reply_style,
+                                  current_location, current_clothing, status_summary,
+                                  conversation_context, user_message, scene_type_detail) -> str:
+        """构建单模型模式的完整创作任务"""
+        return f"""=== 创作任务 ===
 
-【性格特质】
+【要创作的角色】
+角色名：{bot_name}
+
+【角色性格特质】
 {bot_personality}
 
-【回复风格】
+【角色回复风格】
 {bot_reply_style}
 
-【当前状态】
-地点：{current_location} | 着装：{current_clothing}
+【当前场景状态】
+地点：{current_location}
+着装：{current_clothing}
+
+【角色身体/心理状态】（创作时必须体现这些状态）
 {status_summary}
 
-{conversation_context or ""}
+【历史对话】
+{conversation_context or "暂无历史记录"}
 
 【用户消息】
 {user_message}
 
-{scene_type_detail}"""
+{scene_type_detail}
 
-    def _build_single_model_task_info(self, current_location, current_clothing) -> str:
-        """构建单模型模式的任务说明部分"""
-        return f"""【任务】
+【任务】
 同时完成三件事：
 1. 判断状态变化（地点、着装、角色状态）
 2. 生成小说化的场景描写
@@ -485,10 +479,12 @@ nai_prompt 要求（建议配图=true时必填）：
 - vaginal_state: "放松"/"轻微收缩"/"无意识收缩"/"紧绷"/"痉挛"
 - physiological_state: 生理状态描述
 - corruption_level: 污染度增量，仅腐化事件时增加，上限20
+- semen_volume: 体内精液增量(ml)
+- anal_development: 后穴开发度增量，上限20
 
-【场景描写要求】
-- 包含环境描写、动作描写、心理描写
-- 可分段
+**重要提醒**：
+- 普通对话时角色状态更新必须为空 {{}}
+- 状态变化要与场景描写一致
 
 【智能配图】
 判断标准：这个场景画成图，和之前会有明显不同吗？
@@ -521,14 +517,10 @@ nai_prompt 要求（建议配图=true时必填）：
   "地点": "{current_location}",
   "着装": "{current_clothing}",
   "场景": "场景描写内容...",
-  "建议配图": true,
-  "nai_prompt": "1girl, 英文提示词..."
+  "建议配图": ,
+  "nai_prompt": ""
 }}
-```
-
-【重要】
-- 普通对话时角色状态更新必须为空 {{}}
-- 状态变化要与场景描写一致"""
+```"""
 
     @staticmethod
     def _normalize_scene_field(value: Optional[str]) -> str:
