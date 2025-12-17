@@ -81,7 +81,8 @@ class SceneGenerator:
         last_scene: str,
         character_status: Dict[str, Any],
         state_decision: Dict[str, Any],
-        conversation_context: str = ""
+        conversation_context: str = "",
+        include_nsfw: bool = False
     ) -> Optional[Dict[str, str]]:
         """使用reply模型生成场景描述和回复"""
         bot_name = global_config.bot.nickname
@@ -117,7 +118,7 @@ class SceneGenerator:
             # 使用新的结构化 prompt 构建方式
             enhanced_prompt = self.preset_manager.build_structured_prompt(
                 task_info=task_info,
-                include_nsfw=True,
+                include_nsfw=include_nsfw,
                 include_summary=True,
                 include_tucao=True,
                 include_cot=True  # 启用轻量思维链
@@ -173,7 +174,8 @@ class SceneGenerator:
         last_scene: str,
         character_status: Dict[str, Any],
         conversation_context: str = "",
-        scene_type: str = SCENE_TYPE_NORMAL
+        scene_type: str = SCENE_TYPE_NORMAL,
+        include_nsfw: bool = False
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, str]]]:
         """单模型模式：一次调用同时处理状态判断和场景生成"""
         bot_name = global_config.bot.nickname
@@ -194,7 +196,7 @@ class SceneGenerator:
             # 使用新的结构化 prompt 构建方式
             enhanced_prompt = self.preset_manager.build_structured_prompt(
                 task_info=task_info,
-                include_nsfw=True,
+                include_nsfw=include_nsfw,
                 include_summary=True,
                 include_tucao=True,
                 include_cot=True  # 启用轻量思维链

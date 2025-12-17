@@ -16,6 +16,7 @@ from .commands.admin_command import SceneAdminCommand
 from .commands.custom_init_command import CustomInitCommand
 from .commands.status_command import StatusCommand
 from .commands.nai_command import NaiControlCommand
+from .commands.nsfw_command import NsfwControlCommand
 from .handlers.scene_handler import SceneFormatHandler
 from .handlers.schedule_handler import DailyScheduleEventHandler
 
@@ -369,6 +370,7 @@ class SceneFormatPlugin(BasePlugin):
         components.append((CustomInitCommand.get_command_info(), CustomInitCommand))
         components.append((StatusCommand.get_command_info(), StatusCommand))
         components.append((NaiControlCommand.get_command_info(), NaiControlCommand))
+        components.append((NsfwControlCommand.get_command_info(), NsfwControlCommand))
 
         # 事件处理器
         components.append((SceneFormatHandler.get_handler_info(), SceneFormatHandler))

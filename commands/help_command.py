@@ -52,6 +52,7 @@ class HelpCommand(BaseCommand):
 【NAI 生图】
 /sc nai on/off   - 开启/关闭场景配图
 /sc nai          - 查看开关状态
+/sc nsfw on/off  - 开启/关闭 NSFW 加强
 
 【日程管理】
 /sc 日程/schedule  - 生成今日日程

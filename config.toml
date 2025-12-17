@@ -8,7 +8,7 @@
 name = "scene_format_plugin"
 
 # 配置版本
-config_version = "1.0.0"
+config_version = "1.1.0"
 
 # 是否启用插件
 enabled = true
@@ -20,11 +20,170 @@ enabled = true
 # 场景描述的最大长度（字符数）
 max_scene_length = 1000
 
+# 模型调用模式：dual（双模型）或 single（单模型）
+# 可选值: dual, single
+model_mode = "dual"
+
 # Planner模型使用的历史上下文条数（状态判断用）
-planner_context_messages = 10
+planner_context_messages = 5
 
 # Reply模型使用的历史上下文条数（场景生成用）
-reply_context_messages = 50
+reply_context_messages = 40
+
+# NAI生图外貌提示词（直接使用，不翻译）
+appearance_description = "long black hair, hair to waist, waterfall hair, naturally wavy hair, slight curl at ends, porcelain skin, delicate skin, amber eyes, (distant-mountain brows:1.1), thin eyebrows, delicate nose, (rose lips:1.2), full lips, plump lip gloss, (cupid's bow:1.2), slender body, elegant posture,"
+
+# 是否启用每日自动生成日程
+schedule.enabled = true
+
+# 每天自动生成日程的时间（HH:MM格式）
+schedule.time = "05:00"
+
+# 是否显示状态栏
+status_bar.enabled = false
+
+# 状态栏显示模式：compact/full/changes_only
+# 可选值: compact, full, changes_only
+status_bar.display_mode = "compact"
+
+# 状态栏位置：top/bottom
+# 可选值: top, bottom
+status_bar.position = "bottom"
+
+# 是否使用进度条显示快感值
+status_bar.use_progress_bar = true
+
+# 是否显示状态变化提示
+status_changes.enabled = true
+
+# 状态变化格式：detailed/simple
+# 可选值: detailed, simple
+status_changes.format = "detailed"
+
+
+# LLM 模型配置
+[llm]
+
+# Planner模型是否使用自定义API
+planner.use_custom_api = false
+
+# Planner模型API地址
+planner.base_url = ""
+
+# Planner模型API密钥
+planner.api_key = ""
+
+# Planner模型名称
+planner.model = ""
+
+# Planner模型温度参数
+planner.temperature = 0.7
+
+# Planner模型最大输出token数
+planner.max_tokens = 2048
+
+# Planner模型请求超时时间（秒）
+planner.timeout = 60
+
+# Planner模型最大重试次数
+planner.max_retries = 3
+
+# Planner模型重试间隔（秒）
+planner.retry_interval = 1.0
+
+# Planner模型额外参数（JSON对象）
+planner.extra_params = {  }
+
+# Reply模型是否使用自定义API
+reply.use_custom_api = false
+
+# Reply模型API地址
+reply.base_url = ""
+
+# Reply模型API密钥
+reply.api_key = ""
+
+# Reply模型名称
+reply.model = ""
+
+# Reply模型温度参数
+reply.temperature = 1.0
+
+# Reply模型最大输出token数
+reply.max_tokens = 4096
+
+# Reply模型请求超时时间（秒）
+reply.timeout = 120
+
+# Reply模型最大重试次数
+reply.max_retries = 3
+
+# Reply模型重试间隔（秒）
+reply.retry_interval = 1.0
+
+# Reply模型额外参数（JSON对象）
+reply.extra_params = {  }
+
+
+# NAI 生图配置
+[nai]
+
+# NAI API Token
+api_key = "STD-ngTnCcOHUBtI6B9hTAwn"
+
+# NAI API 地址
+base_url = "https://std.loliyc.com"
+
+# NAI生图API端点
+endpoint = "/generate"
+
+# NAI生图兜底概率（0-1），仅当模型未输出配图建议时使用
+trigger_probability = 0.0
+
+# 是否验证SSL证书
+ssl_verify = true
+
+# NAI模型名称
+model = "nai-diffusion-4-5-full"
+
+# 正面提示词后缀
+prompt_suffix = "masterpiece, best quality, cinematic lighting, soft glow, dynamic shadows, light particles, beautiful detailed eyes, detailed iris, expressive eyes, feminin, highly detailed background, intricate details, sharp focus,-1.9::chibi, text::,"
+
+# 负面提示词
+negative_prompt = "{{crowd, many people, people in background, spectators, audience, other people, other characters, multiple subjects}}, {{doll, figurine, toy, mannequin, statue, puppet, chibi, plushie, stuffed toy}}, {{portrait, poster, painting, photograph, picture on wall, person on screen, graffiti, character print, face print}}, {extra face, multiple faces, face in background, disembodied head, pareidolia}, worst quality, low quality, normal quality, lowres, jpeg artifacts, {{ugly}}, {{duplicate}}, blurry, cropped, out of frame, {bad anatomy}, {{bad proportions}}, gross proportions, {malformed limbs}, bad anatomy disfigured, malformed mutated, {{mutation}}, {{deformed}}, {{disfigured}}, {{morbid}}, {{mutilated}}, malformed hands, mutated hands, {poorly drawn hands}, {fused fingers}, too many fingers, extra fingers, extra digit, bad feet, fingers, bad finglegs, extra limbs, {extra arms}, {extra legs}, missing limb, {missing arms}, {missing legs}, {long neck}, {poorly drawn face}, {simple clothing, plain clothes, monochrome, boring outfit}, masculine, beard, scrotum,blur, blurred, blurry, depth of field, bokeh, simple background, black background, dark background, out of focus,"
+
+# 画师串提示词（直接追加到请求参数中）
+artist_preset = "1.4::efe::,1.2::inaeda kei::,0.8::nong 345 ::,0.6::noyu (noyu23386566)::,0.2::nocopyrightgirl::,ningen_mame,0.7::mimoza (96mimo414)::,mikozin,mafuyu (chibi21),0.7::kazutake hazano::,artist:ciloranko,artist:tianliang duohe fangdongye,artist:hiten,artist:rella"
+
+# 采样器名称
+sampler = "k_euler_ancestral"
+
+# 采样步数（1-50）
+steps = 28
+
+# 引导比例/CFG Scale（1.0-20.0）
+guidance_scale = 5.0
+
+# CFG Rescale值（0.0-1.0）
+cfg = 0.0
+
+# 噪声调度器
+noise_schedule = "karras"
+
+# 是否禁用缓存（0或1）
+nocache = 1
+
+# 图片尺寸（竖图/横图/方图等）
+size = "竖图"
+
+# NAI请求超时时间（秒）
+timeout = 120
+
+# NAI请求最大重试次数
+max_retries = 2
+
+# NAI请求重试间隔（秒）
+retry_interval = 2.0
 
 
 # 管理员权限配置
@@ -42,156 +201,6 @@ default_admin_mode = true
 
 # 日志级别
 # 可选值: DEBUG, INFO, WARNING, ERROR
-level = "INFO"
+level = "DEBUG"
 
 
-# LLM API 配置
-# 插件可以使用独立的 API 配置，也可以使用 MaiBot 主程序的模型配置
-# 两个模型可以分别配置，灵活组合
-
-[llm.planner]
-# Planner 模型配置（用于状态判断）
-# 支持 OpenAI 兼容的 API 格式
-
-# 是否使用自定义 API
-# true: 使用下方配置的 API
-# false: 使用 MaiBot 主程序的 planner 模型
-use_custom_api = false
-
-# API 基础 URL（必填）
-# 示例: "https://api.openai.com/v1" 或其他兼容服务
-base_url = ""
-
-# API 密钥（必填）
-api_key = ""
-
-# 模型名称（必填）
-# 示例: "gpt-4o", "claude-3-sonnet", "deepseek-chat" 等
-model = ""
-
-# 温度参数（0-2）
-temperature = 0.7
-
-# 最大输出 token 数
-max_tokens = 2048
-
-# 超时时间（秒）
-timeout = 60
-
-# 重试次数
-max_retries = 3
-
-# 重试间隔（秒）
-retry_interval = 1.0
-
-# 自定义参数（可选）
-# 用于传递模型特定的额外参数，如 top_p, frequency_penalty 等
-# 格式: { 参数名 = 值, ... }
-# 示例: { top_p = 0.9, frequency_penalty = 0.5 }
-extra_params = { }
-
-
-[llm.reply]
-# Reply 模型配置（用于场景生成）
-# 支持 OpenAI 兼容的 API 格式
-
-# 是否使用自定义 API
-# true: 使用下方配置的 API
-# false: 使用 MaiBot 主程序的 replyer 模型
-use_custom_api = false
-
-# API 基础 URL（必填）
-# 示例: "https://api.openai.com/v1" 或其他兼容服务
-base_url = ""
-
-# API 密钥（必填）
-api_key = ""
-
-# 模型名称（必填）
-# 示例: "gpt-4o", "claude-3-sonnet", "deepseek-chat" 等
-model = ""
-
-# 温度参数（0-2）
-temperature = 0.9
-
-# 最大输出 token 数
-max_tokens = 4096
-
-# 超时时间（秒）
-timeout = 120
-
-# 重试次数
-max_retries = 3
-
-# 重试间隔（秒）
-retry_interval = 1.0
-
-# 自定义参数（可选）
-# 用于传递模型特定的额外参数，如 top_p, frequency_penalty 等
-# 格式: { 参数名 = 值, ... }
-# 示例: { top_p = 0.95, presence_penalty = 0.3 }
-extra_params = { }
-
-
-# NAI 生图配置
-# 仅在场景模式下可用，通过 /sc nai on 开启
-
-[nai]
-# NAI 4.5 API 配置
-
-# API 基础 URL
-base_url = "https://std.loliyc.com"
-
-# API 端点
-endpoint = "/generate"
-
-# API Token（必填）
-api_key = ""
-
-# 模型名称
-model = "nai-diffusion-4-5-full"
-
-# 生图触发概率（0.0-1.0）
-# 启用 NAI 后，每次场景回复有此概率触发生图
-# 1.0 = 100% 每次都生图，0.5 = 50% 概率，0.0 = 不生图
-trigger_probability = 0.3
-
-# 图片尺寸
-# 可选: "竖图", "横图", "方图" 或具体尺寸如 "1024x1280"
-size = "竖图"
-
-# 采样器
-sampler = "k_euler_ancestral"
-
-# 推理步数
-steps = 28
-
-# 指导强度
-guidance_scale = 5.0
-
-# CFG 参数
-cfg = 0.0
-
-# 噪声调度器
-noise_schedule = "karras"
-
-# 缓存设置（NAI 4.5 设为 1）
-nocache = 1
-
-# 超时时间（秒）
-timeout = 120
-
-# 重试次数
-max_retries = 2
-
-# 重试间隔（秒）
-retry_interval = 2.0
-
-# 自动添加的正面提示词后缀
-prompt_suffix = "masterpiece, best quality"
-
-# 负面提示词
-negative_prompt = "worst quality, low quality, normal quality, lowres, jpeg artifacts, ugly, duplicate, bad anatomy, bad proportions, mutation, deformed, disfigured, morbid, mutilated, poorly drawn hands, poorly drawn face, extra fingers, extra limbs, long neck, text, signature, watermark, username"
-
-# 画师风格预设（可选，留空则不添加）
-artist_preset = ""

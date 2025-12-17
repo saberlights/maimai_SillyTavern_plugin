@@ -267,7 +267,7 @@ class PresetManager:
         10. 思维链（可选）
         """
         from .preset_content import (
-            MAIN_PROMPT, NSFW_RULES, CREATIVE_FREEDOM,
+            MAIN_PROMPT, NSFW_RULES, NSFW_RULES_ENHANCED, CREATIVE_FREEDOM,
             WRITING_GUIDELINES, TUCAO_FORMAT, SUMMARY_FORMAT,
             BANNED_WORDS, FORMAT_RULES_TEMPLATE,
             CHAIN_OF_THOUGHT_LIGHT
@@ -278,10 +278,15 @@ class PresetManager:
         # 1. 主提示
         parts.append(MAIN_PROMPT)
 
-        # 2-3. NSFW规则 + 创意自由
+        # 2. NSFW规则（开启时把加强规则插入到基础规则的 </NSFW> 之前）
         if include_nsfw:
+            nsfw_content = NSFW_RULES.replace("</NSFW>", NSFW_RULES_ENHANCED + "\n</NSFW>")
+            parts.append(nsfw_content)
+        else:
             parts.append(NSFW_RULES)
-            parts.append(CREATIVE_FREEDOM)
+
+        # 3. 创意自由（始终存在）
+        parts.append(CREATIVE_FREEDOM)
 
         # 4. 创作指南
         parts.append(WRITING_GUIDELINES)

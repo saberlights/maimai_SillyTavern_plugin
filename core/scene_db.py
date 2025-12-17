@@ -103,6 +103,7 @@ class SceneDB:
                     init_time TIMESTAMP,
                     user_id TEXT,
                     nai_enabled INTEGER DEFAULT 0,
+                    nsfw_enabled INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -115,6 +116,8 @@ class SceneDB:
                 cursor.execute("ALTER TABLE scene_states ADD COLUMN user_id TEXT")
             if "nai_enabled" not in columns:
                 cursor.execute("ALTER TABLE scene_states ADD COLUMN nai_enabled INTEGER DEFAULT 0")
+            if "nsfw_enabled" not in columns:
+                cursor.execute("ALTER TABLE scene_states ADD COLUMN nsfw_enabled INTEGER DEFAULT 0")
 
             # 表3：场景历史记录
             cursor.execute("""
@@ -718,6 +721,37 @@ class SceneDB:
         """获取 NAI 生图开关状态"""
         state = self.get_scene_state(chat_id)
         return state.get("nai_enabled", 0) == 1 if state else False
+
+    # ==================== NSFW 开关管理 ====================
+
+    def set_nsfw_enabled(self, chat_id: str, enabled: bool):
+        """设置 NSFW 开关"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        with self._get_cursor() as cursor:
+            cursor.execute("SELECT chat_id FROM scene_states WHERE chat_id = ?", (chat_id,))
+            exists = cursor.fetchone() is not None
+
+            if exists:
+                cursor.execute("""
+                    UPDATE scene_states
+                    SET nsfw_enabled = ?, updated_at = ?
+                    WHERE chat_id = ?
+                """, (1 if enabled else 0, now, chat_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO scene_states
+                    (chat_id, enabled, nsfw_enabled, created_at, updated_at)
+                    VALUES (?, 0, ?, ?, ?)
+                """, (chat_id, 1 if enabled else 0, now, now))
+                logger.info(f"为 {chat_id} 创建场景状态记录（用于 NSFW 开关）")
+
+        logger.info(f"NSFW 开关已设置为 {enabled}: {chat_id}")
+
+    def get_nsfw_enabled(self, chat_id: str) -> bool:
+        """获取 NSFW 开关状态"""
+        state = self.get_scene_state(chat_id)
+        return state.get("nsfw_enabled", 0) == 1 if state else False
 
     # ==================== 数据清理 ====================
 

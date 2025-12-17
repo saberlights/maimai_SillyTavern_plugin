@@ -43,8 +43,9 @@ class StatusCommand(BaseCommand):
             await self.send_text("❌ 当前会话已开启管理员模式，仅管理员可使用")
             return False, "没有权限", 2
 
-        # 解析子命令
-        subcommand = self.matched_groups.get("subcommand", "").lower() if self.matched_groups else ""
+        # 解析子命令（注意：正则匹配的命名组可能是 None）
+        subcommand_raw = self.matched_groups.get("subcommand") if self.matched_groups else None
+        subcommand = subcommand_raw.lower() if subcommand_raw else ""
 
         if subcommand == "history":
             return await self._handle_history(session_id)

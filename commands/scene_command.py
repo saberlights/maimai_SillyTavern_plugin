@@ -25,7 +25,7 @@ class SceneCommand(BaseCommand):
     # 支持 /sc 和 /scene，避免和其他子命令冲突
     command_pattern = (
         r"^/s(?:cene|c)"
-        r"(?:\s+(?!preset\b|help\b|admin\b|status\b|nai\b|style\b|文风\b|pov\b|视角\b|schedule\b|日程\b|init\s+.+).*)?$"
+        r"(?:\s+(?!preset\b|help\b|admin\b|status\b|nai\b|nsfw\b|style\b|文风\b|pov\b|视角\b|schedule\b|日程\b|init\s+.+).*)?$"
     )
 
     def __init__(self, message: MessageRecv, plugin_config: Optional[dict] = None):

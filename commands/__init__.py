@@ -9,6 +9,7 @@ from .admin_command import SceneAdminCommand
 from .custom_init_command import CustomInitCommand
 from .status_command import StatusCommand
 from .nai_command import NaiControlCommand
+from .nsfw_command import NsfwControlCommand
 
 __all__ = [
     "ScheduleGenerateCommand",
@@ -18,5 +19,6 @@ __all__ = [
     "SceneAdminCommand",
     "CustomInitCommand",
     "StatusCommand",
-    "NaiControlCommand"
+    "NaiControlCommand",
+    "NsfwControlCommand"
 ]

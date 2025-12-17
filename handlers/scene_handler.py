@@ -187,6 +187,9 @@ class SceneFormatHandler(BaseEventHandler):
             # 检查模型调用模式
             model_mode = self.get_config("scene.model_mode", "dual")
 
+            # 获取 NSFW 开关状态
+            nsfw_enabled = self.db.get_nsfw_enabled(session_id)
+
             if model_mode == "single":
                 # 单模型模式
                 reply_context = self.context_builder.build_context_block(session_id, context_type="reply")
@@ -198,7 +201,8 @@ class SceneFormatHandler(BaseEventHandler):
                     last_scene=current_state["scene_description"],
                     character_status=character_status,
                     conversation_context=reply_context,
-                    scene_type=scene_type
+                    scene_type=scene_type,
+                    include_nsfw=nsfw_enabled
                 )
 
                 if not scene_reply:
@@ -243,7 +247,8 @@ class SceneFormatHandler(BaseEventHandler):
                     last_scene=current_state["scene_description"],
                     character_status=updated_character_status,
                     state_decision=state_decision,
-                    conversation_context=reply_context
+                    conversation_context=reply_context,
+                    include_nsfw=nsfw_enabled
                 )
 
                 if not scene_reply:
