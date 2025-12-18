@@ -218,3 +218,77 @@ def get_default_decision() -> Dict[str, Any]:
         "新着装": "",
         "角色状态更新": {}
     }
+
+
+def extract_scene_content(response: str) -> str:
+    """
+    从 LLM 返回中提取正文内容
+
+    LLM 返回格式通常为：
+    - 正文内容（可能有 <content>...</content> 包裹）
+    - <tucao>...</tucao> 吐槽（穿插或末尾）
+    - <details>...</details> 摘要
+    - ```json {...} ``` 元数据
+
+    此函数提取正文部分，去除元数据标签
+    """
+    if not response:
+        return ""
+
+    text = response
+
+    # 1. 尝试提取 <content>...</content> 中的内容
+    content_match = re.search(r'<content>(.*?)</content>', text, re.DOTALL)
+    if content_match:
+        text = content_match.group(1)
+    else:
+        # 没有 content 标签，需要清理其他标签
+        # 移除 JSON 代码块（通常在末尾）
+        text = re.sub(r'```json\s*\{.*?\}\s*```', '', text, flags=re.DOTALL)
+        text = re.sub(r'```\s*\{.*?\}\s*```', '', text, flags=re.DOTALL)
+
+        # 移除 <details>...</details> 摘要块
+        text = re.sub(r'<details>.*?</details>', '', text, flags=re.DOTALL)
+
+        # 移除 <think>...</think> 思维链
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+
+    # 2. 移除 <tucao>...</tucao> 吐槽内容
+    text = re.sub(r'<tucao>.*?</tucao>', '', text, flags=re.DOTALL)
+
+    # 3. 移除其他可能的标签残留
+    text = re.sub(r'</?content>', '', text)
+    text = re.sub(r'</?tucao>', '', text)
+
+    # 4. 清理多余空白，但保留段落结构
+    # 将连续3个以上换行符压缩为2个
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # 清理首尾空白
+    text = text.strip()
+
+    return text
+
+
+def extract_scene_with_metadata(response: str) -> Dict[str, Any]:
+    """
+    从 LLM 返回中同时提取正文和 JSON 元数据
+
+    Returns:
+        {
+            "content": "正文内容",
+            "metadata": {...}  # JSON 元数据，可能为 None
+        }
+    """
+    result = {
+        "content": "",
+        "metadata": None
+    }
+
+    # 提取正文
+    result["content"] = extract_scene_content(response)
+
+    # 提取 JSON 元数据
+    result["metadata"] = parse_json_response(response)
+
+    return result

@@ -18,20 +18,20 @@ enabled = true
 [scene]
 
 # 场景描述的最大长度（字符数）
-max_scene_length = 1000
+max_scene_length = 800
 
 # 模型调用模式：dual（双模型）或 single（单模型）
 # 可选值: dual, single
 model_mode = "dual"
 
 # Planner模型使用的历史上下文条数（状态判断用）
-planner_context_messages = 5
+planner_context_messages = 3
 
 # Reply模型使用的历史上下文条数（场景生成用）
-reply_context_messages = 40
+reply_context_messages = 20
 
 # NAI生图外貌提示词（直接使用，不翻译）
-appearance_description = "long black hair, hair to waist, waterfall hair, naturally wavy hair, slight curl at ends, porcelain skin, delicate skin, amber eyes, (distant-mountain brows:1.1), thin eyebrows, delicate nose, (rose lips:1.2), full lips, plump lip gloss, (cupid's bow:1.2), slender body, elegant posture,"
+appearance_description = "{{{black hair}}},{multicolored hair}, {purple highlights}, {pink highlights}, streaked color,medium hair, double bun, hair buns,green eyes, tareme, {mole under eye},petite, slender,[[small breasts]]"
 
 # 是否启用每日自动生成日程
 schedule.enabled = true
@@ -51,14 +51,14 @@ status_bar.display_mode = "compact"
 status_bar.position = "bottom"
 
 # 是否使用进度条显示快感值
-status_bar.use_progress_bar = true
+status_bar.use_progress_bar = false
 
 # 是否显示状态变化提示
 status_changes.enabled = true
 
 # 状态变化格式：detailed/simple
 # 可选值: detailed, simple
-status_changes.format = "detailed"
+status_changes.format = "simple"
 
 
 # LLM 模型配置
@@ -107,7 +107,7 @@ reply.api_key = ""
 reply.model = ""
 
 # Reply模型温度参数
-reply.temperature = 1.0
+reply.temperature = 0.9
 
 # Reply模型最大输出token数
 reply.max_tokens = 4096
@@ -129,7 +129,7 @@ reply.extra_params = {  }
 [nai]
 
 # NAI API Token
-api_key = "STD-ngTnCcOHUBtI6B9hTAwn"
+api_key = "STD-Qks8AJcCqW6nsLq10g6d"
 
 # NAI API 地址
 base_url = "https://std.loliyc.com"
@@ -138,7 +138,7 @@ base_url = "https://std.loliyc.com"
 endpoint = "/generate"
 
 # NAI生图兜底概率（0-1），仅当模型未输出配图建议时使用
-trigger_probability = 0.0
+trigger_probability = 0.3
 
 # 是否验证SSL证书
 ssl_verify = true
@@ -147,13 +147,13 @@ ssl_verify = true
 model = "nai-diffusion-4-5-full"
 
 # 正面提示词后缀
-prompt_suffix = "masterpiece, best quality, cinematic lighting, soft glow, dynamic shadows, light particles, beautiful detailed eyes, detailed iris, expressive eyes, feminin, highly detailed background, intricate details, sharp focus,-1.9::chibi, text::,"
+prompt_suffix = "masterpiece, best quality, absurdres,beautiful detailed eyes, detailed iris, expressive eyes, blush, curvy, feminine, wind, hair blowing, scenery, highly detailed background, sharp focus, in focus, clear background, intricate details, -1.9::chibi, text::"
 
 # 负面提示词
-negative_prompt = "{{crowd, many people, people in background, spectators, audience, other people, other characters, multiple subjects}}, {{doll, figurine, toy, mannequin, statue, puppet, chibi, plushie, stuffed toy}}, {{portrait, poster, painting, photograph, picture on wall, person on screen, graffiti, character print, face print}}, {extra face, multiple faces, face in background, disembodied head, pareidolia}, worst quality, low quality, normal quality, lowres, jpeg artifacts, {{ugly}}, {{duplicate}}, blurry, cropped, out of frame, {bad anatomy}, {{bad proportions}}, gross proportions, {malformed limbs}, bad anatomy disfigured, malformed mutated, {{mutation}}, {{deformed}}, {{disfigured}}, {{morbid}}, {{mutilated}}, malformed hands, mutated hands, {poorly drawn hands}, {fused fingers}, too many fingers, extra fingers, extra digit, bad feet, fingers, bad finglegs, extra limbs, {extra arms}, {extra legs}, missing limb, {missing arms}, {missing legs}, {long neck}, {poorly drawn face}, {simple clothing, plain clothes, monochrome, boring outfit}, masculine, beard, scrotum,blur, blurred, blurry, depth of field, bokeh, simple background, black background, dark background, out of focus,"
+negative_prompt = "{{crowd, many people, people in background, spectators, audience, other people, other characters, multiple subjects}}, {{doll, figurine, toy, mannequin, statue, puppet, chibi, plushie, stuffed toy}}, {{portrait, poster, painting, photograph, picture on wall, graffiti, character print, face print}}, {extra face, multiple faces, face in background, disembodied head, pareidolia}, worst quality, low quality, normal quality, lowres, jpeg artifacts, {{ugly}}, {{duplicate}}, cropped, out of frame, {bad anatomy}, {{bad proportions}}, gross proportions, {malformed limbs}, bad anatomy disfigured, malformed mutated, {{mutation}}, {{deformed}}, {{disfigured}}, {{morbid}}, {{mutilated}}, malformed hands, mutated hands, {poorly drawn hands}, {fused fingers}, too many fingers, extra fingers, extra digit, bad feet, fingers, bad finglegs, extra limbs, {extra arms}, {extra legs}, missing limb, {missing arms}, {missing legs}, {long neck}, {poorly drawn face}, {simple clothing, plain clothes, monochrome, boring outfit}, masculine, beard, scrotum, simple background, black background, dark background, text, signature, watermark, username, artist name"
 
 # 画师串提示词（直接追加到请求参数中）
-artist_preset = "1.4::efe::,1.2::inaeda kei::,0.8::nong 345 ::,0.6::noyu (noyu23386566)::,0.2::nocopyrightgirl::,ningen_mame,0.7::mimoza (96mimo414)::,mikozin,mafuyu (chibi21),0.7::kazutake hazano::,artist:ciloranko,artist:tianliang duohe fangdongye,artist:hiten,artist:rella"
+artist_preset = "1.4::kazutake hazano::, 1.2::efe::, 1.0::inamori ryusa::, 0.9::tianliang duohe fangdongye::, 0.8::min_(120716)::, 0.8::misumigumi::, 0.8::makihitsuji::, 0.8::nong 345 ::, 0.7::mimoza (96mimo414)::, 0.6::fujiyama::, 0.5::rella::, 0.4::dolphro-kun::, [[channel_(caststation)]],-2::artist collaboration::"
 
 # 采样器名称
 sampler = "k_euler_ancestral"
@@ -190,7 +190,7 @@ retry_interval = 2.0
 [admin]
 
 # 管理员用户ID列表
-admin_users = ["137068619"]
+admin_users = [584232670]
 
 # 默认是否启用管理员模式
 default_admin_mode = true
@@ -201,6 +201,6 @@ default_admin_mode = true
 
 # 日志级别
 # 可选值: DEBUG, INFO, WARNING, ERROR
-level = "DEBUG"
+level = "INFO"
 
 

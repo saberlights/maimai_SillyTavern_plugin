@@ -6,7 +6,7 @@ import re
 from typing import Dict, Any, Optional, Tuple, Callable
 from src.config.config import global_config
 from src.common.logger import get_logger
-from .utils import parse_json_response, normalize_planner_decision, get_default_decision
+from .utils import parse_json_response, normalize_planner_decision, get_default_decision, extract_scene_with_metadata
 from .state_manager import (
     SCENE_TYPE_NORMAL, SCENE_TYPE_ROMANTIC, SCENE_TYPE_INTIMATE,
     SCENE_TYPE_EXPLICIT, SCENE_TYPE_REST
@@ -128,16 +128,27 @@ class SceneGenerator:
             response, _ = await self.reply_llm.generate_response_async(enhanced_prompt)
             logger.info(f"[Reply] Response:\n{response}")
 
-            reply_data = parse_json_response(response)
+            # 使用新的提取方法：同时提取正文和 JSON 元数据
+            extracted = extract_scene_with_metadata(response)
+            scene_content = extracted["content"]
+            reply_data = extracted["metadata"]
+
             if not reply_data:
                 logger.error(f"[Reply] JSON解析失败")
                 return None
 
-            required_fields = ["地点", "着装", "场景"]
-            for field in required_fields:
-                if field not in reply_data:
-                    logger.error(f"[Reply] 缺少字段: {field}")
-                    return None
+            # 检查必要的元数据字段
+            if "地点" not in reply_data or "着装" not in reply_data:
+                logger.error(f"[Reply] 缺少地点或着装字段")
+                return None
+
+            # 使用提取的正文内容替代 JSON 中的简短"场景"字段
+            if scene_content and len(scene_content) > len(reply_data.get("场景", "")):
+                logger.info(f"[Reply] 使用提取的正文内容 (长度: {len(scene_content)}) 替代 JSON 场景字段")
+                reply_data["场景"] = scene_content
+            elif not reply_data.get("场景"):
+                logger.error(f"[Reply] 场景内容为空")
+                return None
 
             reply_location = self._normalize_scene_field(reply_data.get("地点", ""))
             reply_clothing = self._normalize_scene_field(reply_data.get("着装", ""))
@@ -206,7 +217,11 @@ class SceneGenerator:
             response, _ = await self.reply_llm.generate_response_async(enhanced_prompt)
             logger.info(f"[SingleModel] Response:\n{response}")
 
-            result = parse_json_response(response)
+            # 使用新的提取方法：同时提取正文和 JSON 元数据
+            extracted = extract_scene_with_metadata(response)
+            scene_content = extracted["content"]
+            result = extracted["metadata"]
+
             if not result:
                 logger.error("[SingleModel] JSON解析失败")
                 return get_default_decision(), None
@@ -238,6 +253,11 @@ class SceneGenerator:
                 "着装": final_clothing,
                 "场景": result.get("场景", "")
             }
+
+            # 使用提取的正文内容替代 JSON 中的简短"场景"字段
+            if scene_content and len(scene_content) > len(scene_reply["场景"]):
+                logger.info(f"[SingleModel] 使用提取的正文内容 (长度: {len(scene_content)}) 替代 JSON 场景字段")
+                scene_reply["场景"] = scene_content
 
             # 透传智能配图相关字段，单模型模式也能触发生图逻辑
             if "建议配图" in result:

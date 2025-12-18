@@ -338,6 +338,17 @@ class SceneCommand(BaseCommand):
 
 使用 /scene on 启动场景模式"""
 
+            # 保存初始化场景到历史记录（让后续对话能读取到初始场景）
+            self.db.add_scene_history(
+                chat_id=session_id,
+                location=scene_data["地点"],
+                clothing=scene_data["着装"],
+                scene_description=scene_data["场景"],
+                user_message="[场景初始化]",
+                bot_reply=reply
+            )
+            logger.info(f"[SceneCommand] 初始化场景已保存到历史记录: {session_id}")
+
             return await self._send_command_reply(reply)
 
         except Exception as e:
@@ -529,6 +540,17 @@ class SceneCommand(BaseCommand):
 
 🎬 场景：
 {scene_text}"""
+
+            # 保存过渡场景到历史记录（让后续对话能读取到过渡场景）
+            self.db.add_scene_history(
+                chat_id=session_id,
+                location=scene_data["地点"],
+                clothing=scene_data["着装"],
+                scene_description=scene_data["场景"],
+                user_message=f"[场景过渡 - 时间流逝 {time_diff_hours:.1f} 小时]",
+                bot_reply=reply
+            )
+            logger.info(f"[SceneCommand] 过渡场景已保存到历史记录: {session_id}")
 
             return await self._send_command_reply(reply)
 
