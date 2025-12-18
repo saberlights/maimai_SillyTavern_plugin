@@ -12,6 +12,7 @@ from src.common.logger import get_logger
 from ..core.scene_db import SceneDB
 from ..core.preset_manager import PresetManager
 from ..core.llm_client import LLMClientFactory
+from ..core.utils import parse_json_response
 
 logger = get_logger("custom_init_command")
 
@@ -112,8 +113,8 @@ class CustomInitCommand(BaseCommand):
             llm_response, _ = await self.llm.generate_response_async(enhanced_prompt)
             logger.info(f"[CustomInit] LLM返回: {llm_response}")
 
-            # 解析JSON
-            scene_data = self._parse_json_response(llm_response)
+            # 解析JSON（使用带宽松回退的解析方法）
+            scene_data = parse_json_response(llm_response)
 
             if not scene_data:
                 reply = "❌ 场景生成失败，请稍后重试"
@@ -166,25 +167,6 @@ class CustomInitCommand(BaseCommand):
         """构建会话ID"""
         user_part = user_id or "unknown_user"
         return f"{chat_id}:{user_part}"
-
-    def _parse_json_response(self, response: str) -> Optional[dict]:
-        """解析LLM返回的JSON"""
-        try:
-            json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = response
-
-            data = json.loads(json_str)
-            return data
-
-        except json.JSONDecodeError as e:
-            logger.error(f"[CustomInit] JSON解析失败: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"[CustomInit] 解析响应时出错: {e}")
-            return None
 
     @classmethod
     def get_command_info(cls) -> CommandInfo:
